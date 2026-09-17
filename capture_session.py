@@ -67,6 +67,11 @@ def identity_from_storage(storage: dict[str, str]) -> tuple[str | None, int | No
     Any parse failure, wrong shape or missing key yields (None, None) rather than
     an exception - a capture must not fail because a page changed its layout.
     """
+    # A malformed --from-json dump is imported verbatim (``null`` decodes to
+    # None, a number stays a number), so storage is not necessarily a mapping.
+    # Identity is never load-bearing: return unknown rather than raise.
+    if not isinstance(storage, dict):
+        return None, None
     try:
         blob = json.loads(storage.get("auth") or "")
     except ValueError:
@@ -107,6 +112,11 @@ def build_session(
     ``Session.is_stale()``.
     """
     stamp = time.time() if observed_at is None else observed_at
+    # Imported dumps can carry any JSON type where a mapping was expected, and
+    # main() already reports a session with no `duel` cookie as a failed
+    # capture, which is more informative than a traceback from in here.
+    storage = storage if isinstance(storage, dict) else {}
+    cookies = cookies if isinstance(cookies, dict) else {}
     username, user_id = identity_from_storage(storage)
     return Session(
         device_uuid=storage.get("security:uuid") or Session().device_uuid,
@@ -137,6 +147,10 @@ def _devtools_note(cdp_url: str) -> str:
         )
     except OSError as exc:
         return f"note: nothing is serving DevTools at {cdp_url} ({exc})"
+    except Exception as exc:
+        # Never let the diagnostic mask the error it exists to explain. A
+        # malformed port raises InvalidURL, which is not an OSError.
+        return f"note: could not probe {cdp_url} ({type(exc).__name__}: {exc})"
     return f"note: {cdp_url} responded outside the attach path: {body[:120]!r}"
 
 
@@ -146,6 +160,25 @@ def _port_of(cdp_url: str) -> int | None:
         return urllib.parse.urlsplit(cdp_url).port
     except ValueError:
         return None
+
+
+def _start_hint(cdp_url: str) -> str:
+    """Remediation line naming the port in use, or a generic one when absent.
+
+    ``http://127.0.0.1`` carries no port, and interpolating that directly
+    rendered the literal ``--remote-debugging-port=None`` - not a thing an
+    operator can run.
+    """
+    port = _port_of(cdp_url)
+    if port is None:
+        return (
+            "Start (or restart) Chrome with --remote-debugging-port=<free port>, "
+            "pass that same URL back via --cdp-url, then log in by hand."
+        )
+    return (
+        f"Start (or restart) Chrome with --remote-debugging-port={port}, "
+        "then log in by hand and re-run this command."
+    )
 
 
 def capture(cdp_url: str = CDP_URL, *, keep: tuple[str, ...] = SESSION_COOKIES) -> Session:
@@ -163,8 +196,7 @@ def capture(cdp_url: str = CDP_URL, *, keep: tuple[str, ...] = SESSION_COOKIES) 
             raise SystemExit(
                 f"could not attach to Chrome at {cdp_url}: {exc}\n"
                 f"{_devtools_note(cdp_url)}\n"
-                f"Start (or restart) Chrome with --remote-debugging-port={_port_of(cdp_url)},"
-                " then log in by hand and re-run this command."
+                f"{_start_hint(cdp_url)}"
             )
 
         contexts = browser.contexts
@@ -208,13 +240,26 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.from_json:
         raw = json.loads(Path(args.from_json).read_text(encoding="utf-8"))
-        storage = raw.get("local_storage", {}) or raw.get("localStorage", {})
+        if not isinstance(raw, dict):
+            raise SystemExit(
+                f"{args.from_json} is not a captured-session object (found "
+                f'{type(raw).__name__}); expected a JSON object holding "cookies" '
+                'and "local_storage".'
+            )
+        # A dump is imported verbatim, so any field can hold the wrong JSON type
+        # (`null` decodes to None, a number stays a number). Coerce once, here,
+        # rather than trusting every use below: build_session can tolerate a bad
+        # storage blob, but this branch reads it directly too.
+        storage = raw.get("local_storage") or raw.get("localStorage") or {}
+        if not isinstance(storage, dict):
+            storage = {}
+        cookies = raw.get("cookies") or {}
         # build_session derives identity; here the file's mtime is the best
         # capture-time proxy available - a lower bound, since copying the file
         # refreshes mtime. That matches is_stale() semantics: past TTL is
         # definitive, within TTL only means "not provably expired".
         session = build_session(
-            raw.get("cookies", {}),
+            cookies,
             storage,
             observed_at=None if args.no_stamp else Path(args.from_json).stat().st_mtime,
         )
