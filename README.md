@@ -149,7 +149,7 @@ anti-bot flags on the account.
 
 This is the methodology's *Capture* step and the reliable path.
 
-1. Launch Chrome against an isolated profile:
+1. Launch a Chromium browser against an isolated profile:
 
    ```bash
    chrome.exe --remote-debugging-port=9222 \
@@ -157,8 +157,17 @@ This is the methodology's *Capture* step and the reliable path.
               --no-first-run
    ```
 
+   **Any Chromium works** — Chrome, Edge, Brave, Vivaldi. This tool attaches over
+   CDP and never launches a browser itself, so Microsoft Edge is a drop-in
+   alternative (`msedge.exe` takes the same flags; verified against `Edg/153`).
+   Firefox and WebKit do not speak CDP, so they are not options.
+
    Any free port works — pass it to the next step with `--cdp-url`. If something
    already owns 9222, do **not** kill that process: pick a free port instead.
+
+   A dedicated `--user-data-dir` is required, not optional. Without it the launch
+   hands off to an already-running browser instance and the debug port silently
+   never binds — which looks like a broken tool rather than a missing flag.
 
 2. Log in at <https://duel.com> **by hand** in that window, captcha included.
 3. Lift the session out:

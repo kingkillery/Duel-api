@@ -10,16 +10,22 @@ that browser and replay it over HTTP.
 
 Usage
 -----
-1. Start Chrome with remote debugging, pointed at the profile directory::
+1. Start a Chromium browser with remote debugging, pointed at a profile dir::
 
        chrome.exe --remote-debugging-port=9222 \
                   --user-data-dir=.private-api-automation/chrome-profile \
                   --no-first-run
 
-   Any free port works - pass it to this script with --cdp-url. If the chosen
-   port is already owned by something that is not a debuggable Chrome, the
-   attach fails with an HTTP 404 instead of a refused connection; the error
-   says so explicitly, so move to a free port rather than restarting Chrome.
+   Any Chromium works - Edge (msedge.exe), Brave and Vivaldi take the same flags.
+   This script only ever attaches over CDP; it never launches a browser itself.
+   Firefox and WebKit do not speak CDP, so they are not options here.
+
+   Any free port works - pass it to this script with --cdp-url. A dedicated
+   --user-data-dir is required rather than optional: without it the launch hands
+   off to an already-running instance and the debug port silently never binds. If
+   the chosen port is already owned by something that is not a debuggable browser,
+   the attach fails with an HTTP 404 instead of a refused connection; the error
+   says so explicitly, so move to a free port rather than restarting the browser.
 
 2. Log in to https://duel.com by hand in that window (including the captcha).
 3. Run::
