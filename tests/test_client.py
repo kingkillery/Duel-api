@@ -979,3 +979,94 @@ def test_cookie_cleared_by_the_server_is_not_resurrected() -> None:
     with make_client(handler, session) as client:
         client.metadata()
         assert "__cf_bm" not in client.session.cookies
+
+
+def test_canonical_path_normalises_spelling() -> None:
+    from automation_client import canonical_path
+
+    assert canonical_path("/api/v2/dice/b%65t") == "/api/v2/dice/bet"
+    assert canonical_path("/api/v2//dice/./bet?x=1") == "/api/v2/dice/bet"
+    assert canonical_path("/api/v2/dice/x/../bet") == "/api/v2/dice/bet"
+    assert canonical_path("/api/v2/dice/%2562et") == "/api/v2/dice/bet"
+    # A plain path must survive unchanged, or every allowlist match breaks.
+    assert canonical_path("/api/v2/metadata/socket-token") == "/api/v2/metadata/socket-token"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v2/dice/bet",
+        "/api/v2/dice/b%65t",
+        "/api/v2/dice/be%74",
+        "/api/v2/dice/%2562et",
+        "/api/v2/dice//bet",
+        "/api/v2/dice/./bet",
+        "/api/v2/dice/x/../bet",
+        "/api/v2/DICE/BET",
+        "/api/v2/dice/bet?x=1",
+    ],
+)
+def test_generic_path_cannot_reach_a_money_endpoint_by_any_spelling(path: str) -> None:
+    """The money blocklist must not be evadable by how a path is spelled.
+
+    Regression: ``POST /api/v2/dice/b%65t`` was actually SENT - the guard
+    classified the raw string while the server decodes it to the bet endpoint.
+    """
+    sent: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(str(request.url))
+        return httpx.Response(200, json={"data": {}})
+
+    with make_client(handler) as client:
+        with pytest.raises(UnsupportedAction):
+            client.request("POST", path, json_body={"amount": "1"}, confirm=True)
+
+    assert sent == []
+
+
+def test_canonicalisation_does_not_over_block_a_harmless_encoded_path() -> None:
+    """The fix must refuse money paths, not everything that looks encoded."""
+    sent: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(str(request.url))
+        return httpx.Response(200, json={})
+
+    with make_client(handler) as client:
+        client.request("POST", "/api/v2/client-se%65d", json_body={}, confirm=True)
+
+    assert len(sent) == 1
+
+
+@pytest.mark.parametrize("amount", ["NaN", "Infinity", "-Infinity", "sNaN"])
+def test_place_dice_bet_rejects_a_non_finite_stake(amount: str) -> None:
+    """Decimal('NaN') parses, then `stake <= 0` raised decimal.InvalidOperation.
+
+    Reachable as `dice-bet --amount NaN`, which surfaced a raw decimal
+    traceback instead of the documented ValueError.
+    """
+    with make_client(lambda request: httpx.Response(200, json={})) as client:
+        with pytest.raises(ValueError, match="finite decimal stake"):
+            client.place_dice_bet(amount, bet_type="UNDER", currency="SOL", target="5005")
+
+
+def test_spec_drift_reports_a_missing_bundle_instead_of_raising() -> None:
+    """A renamed bundle IS drift; the tripwire must report it, not crash."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="not found")
+
+    spec = {
+        "metadata": {
+            "provenance": {
+                "bundle": "/assets/index-GONE.js",
+                "bundle_sha256_prefix": "518cc628",
+            }
+        }
+    }
+    with make_client(handler) as client:
+        result = client.check_spec_drift(spec)
+
+    assert result["drifted"] is True
+    assert "404" in result["reason"]

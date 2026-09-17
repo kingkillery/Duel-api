@@ -25,6 +25,7 @@ import hashlib
 import json
 import os
 import time
+import urllib.parse
 import uuid as _uuid
 from decimal import Decimal, InvalidOperation
 from dataclasses import asdict, dataclass, field
@@ -127,6 +128,38 @@ DEFAULT_MAX_STAKE = 1.0
 DICE_BET_PATH = "/api/v2/dice/bet"
 DICE_CONFIG_PATH = "/api/v2/dice/config"
 DICE_BET_TYPES = ("OVER", "UNDER")
+
+def canonical_path(path: str) -> str:
+    """Canonical form of a request path, for security classification only.
+
+    The server decodes percent escapes and collapses ``.``/``..`` segments
+    before routing, so ``/api/v2/dice/b%65t`` reaches the same handler as
+    ``/api/v2/dice/bet``. A blocklist that classifies the raw string is
+    therefore evadable by spelling alone - the one property a money blocklist
+    must not have. Classification happens on this form; the wire request keeps
+    the original path, because normalising it could change real semantics for
+    genuinely encoded path parameters.
+
+    Decodes repeatedly, since ``%2565`` decodes to ``%65`` and only then to
+    ``e``, and drops the query and fragment, which routing ignores but a
+    blocklist must not.
+    """
+    for _ in range(4):
+        decoded = urllib.parse.unquote(path)
+        if decoded == path:
+            break
+        path = decoded
+    path = path.split("?", 1)[0].split("#", 1)[0]
+    segments: list[str] = []
+    for segment in path.split("/"):
+        if segment in ("", "."):
+            continue
+        if segment == "..":
+            if segments:
+                segments.pop()
+            continue
+        segments.append(segment)
+    return "/" + "/".join(segments)
 
 
 @dataclass
@@ -509,7 +542,20 @@ class DuelClient:
         expected = provenance.get("bundle_sha256_prefix") or ""
         if not bundle or not expected:
             return {"drifted": None, "reason": "spec records no bundle hash"}
-        body = self.fetch_text(bundle if bundle.startswith("/") else f"/{bundle}")
+        try:
+            body = self.fetch_text(bundle if bundle.startswith("/") else f"/{bundle}")
+        except httpx.HTTPError as exc:
+            # A renamed or withdrawn bundle IS the drift this tripwire exists to
+            # report; letting raise_for_status() escape would crash spec-check
+            # exactly when it finally has something to say.
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            detail = f"HTTP {status}" if status else type(exc).__name__
+            return {
+                "expected": expected,
+                "actual": None,
+                "drifted": True,
+                "reason": f"bundle could not be fetched ({detail})",
+            }
         actual = hashlib.sha256(body.encode("utf-8")).hexdigest()[:8]
         return {"expected": expected, "actual": actual, "drifted": actual != expected}
 
@@ -655,7 +701,10 @@ class DuelClient:
           allowed, since login is already gated by :class:`CaptchaRequired`;
         * every other state-changing call needs an explicit opt-in.
         """
-        bare = path.split("?")[0].lower()
+        # Classify on the canonical form. The raw string is evadable by spelling
+        # alone: POST /api/v2/dice/b%65t reaches the bet handler after the
+        # server's own decoding, and used to sail past this blocklist.
+        bare = canonical_path(path).lower()
         # Reads are always allowed, including the read-only method listings
         # (e.g. GET withdraw/methods); money-moving state changes are refused
         # below regardless of opt-in, unless this is the reviewed betting path.
@@ -778,6 +827,11 @@ class DuelClient:
             stake = Decimal(str(amount))
         except InvalidOperation:
             raise ValueError(f"amount must be a decimal stake string, got {amount!r}") from None
+        if not stake.is_finite():
+            # Decimal('NaN') and Decimal('Infinity') both parse, and the
+            # comparison below then raises InvalidOperation instead of the
+            # documented ValueError - reachable as `dice-bet --amount NaN`.
+            raise ValueError(f"amount must be a finite decimal stake, got {amount!r}")
         if stake <= 0:
             raise ValueError(f"amount must be positive, got {amount!r}")
         target_s = str(target)
