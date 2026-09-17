@@ -1,0 +1,20 @@
+# Captured sessions contain live cookies - never commit them.
+.private-api-automation/
+captures/session*.json
+session.json
+
+# Browser profile (holds cookies, history, DPAPI-encrypted secrets)
+.private-api-automation/chrome-profile/
+chrome-profile/
+
+# Secrets
+.env
+.env.*
+credentials.json
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/

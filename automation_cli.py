@@ -1,0 +1,315 @@
+#!/usr/bin/env python3
+"""Command-line front end for the Duel.com private-API client.
+
+Examples
+--------
+    python automation_cli.py spec
+    python automation_cli.py metadata
+    python automation_cli.py whoami
+    python automation_cli.py import-session captures/session.json
+    python automation_cli.py games --limit 5
+    python automation_cli.py call GET /api/v2/user/settings
+
+Read-only by design: there is no wagering command. See README.md.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+from automation_client import (
+    DEFAULT_PROFILE,
+    AuthRequired,
+    CaptchaRequired,
+    CloudflareChallenge,
+    DuelClient,
+    DuelError,
+    Session,
+    UnsupportedAction,
+    WriteNotAllowed,
+)
+
+
+def _emit(value: object) -> None:
+    print(json.dumps(value, indent=1, sort_keys=True, default=str))
+
+
+def _client(args: argparse.Namespace) -> DuelClient:
+    """Build a client, honouring the global ``--yes`` write opt-in."""
+    profile = Path(args.profile)
+    writes = bool(getattr(args, "yes", False))
+    if profile.exists():
+        return DuelClient.from_profile(profile, allow_writes=writes)
+    client = DuelClient(profile=profile, allow_writes=writes)
+    # Seed the device uuid / cookie jar without authenticating.
+    try:
+        client.metadata()
+        client.save()
+    except DuelError as exc:
+        print(f"warning: bootstrap failed: {exc}", file=sys.stderr)
+    return client
+
+
+def cmd_spec(args: argparse.Namespace) -> int:
+    spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
+    _emit(
+        {
+            "site_name": spec["site_name"],
+            "base_url": spec["base_url"],
+            "spec_version": spec.get("spec_version"),
+            "endpoints": [
+                {
+                    "id": ep["id"],
+                    "label": ep["label"],
+                    "method": ep["request"]["method"],
+                    "url": ep["request"]["url"],
+                    "likely_action": ep.get("likely_action", False),
+                }
+                for ep in spec.get("endpoints", [])
+            ],
+            "token_sources": [ts["name"] for ts in spec.get("token_sources", [])],
+            "out_of_scope": spec.get("metadata", {}).get("out_of_scope", []),
+        }
+    )
+    return 0
+
+
+def cmd_metadata(args: argparse.Namespace) -> int:
+    with _client(args) as client:
+        doc = client.metadata(refresh_session=args.new_uuid)
+        client.save()
+        user = doc.get("user")
+        _emit(
+            {
+                "device_uuid": client.session.device_uuid,
+                "session_id": doc.get("session_id"),
+                "authenticated": bool(user),
+                "user": {"id": user.get("id"), "username": user.get("username")} if user else None,
+                "captcha_on_login": (doc.get("features") or {}).get("captcha_on_login"),
+                "turnstile_sitekey": doc.get("turnstile_sitekey"),
+                "feature_count": len(doc.get("features") or {}),
+                "cookies": sorted(k for k, v in client.session.cookies.items() if v),
+            }
+        )
+    return 0
+
+
+def cmd_whoami(args: argparse.Namespace) -> int:
+    if not Path(args.profile).exists():
+        _emit({"authenticated": False, "reason": "no captured session", "profile": args.profile})
+        return 1
+    with DuelClient.from_profile(args.profile) as client:
+        try:
+            user = (client.metadata() or {}).get("user")
+        except DuelError as exc:
+            _emit({"authenticated": False, "reason": str(exc)})
+            return 1
+        _emit({"authenticated": bool(user), "user": user})
+        return 0 if user else 1
+
+
+def cmd_login(args: argparse.Namespace) -> int:
+    token = args.captcha_token or os.environ.get("DUEL_CAPTCHA_TOKEN", "")
+    password = args.password or os.environ.get("DUEL_PASSWORD", "")
+    if not password:
+        print("error: pass --password or set DUEL_PASSWORD", file=sys.stderr)
+        return 2
+    with DuelClient(profile=args.profile) as client:
+        result = client.login(args.identifier, password, captcha_token=token)
+        _emit({"ok": True, "user": (result or {}).get("user")})
+    return 0
+
+
+def cmd_import_session(args: argparse.Namespace) -> int:
+    """Import a session captured from a real browser (see capture_session.py)."""
+    session = Session.load(args.file)
+    client = DuelClient(session, profile=args.profile)
+    try:
+        user = (client.metadata() or {}).get("user")
+    except DuelError as exc:
+        print(f"error: imported session not usable: {exc}", file=sys.stderr)
+        return 1
+    if user:
+        session.username = user.get("username")
+        session.user_id = user.get("id")
+    session.save(args.profile)
+    _emit({"ok": True, "authenticated": bool(user), "user": user, "saved_to": args.profile})
+    return 0 if user else 1
+
+
+def cmd_games(args: argparse.Namespace) -> int:
+    """Game catalogue listing.
+
+    Live shape is ``{success, data: {category, items, total}}`` - ``items`` holds
+    the games.  Emit a compact digest rather than the raw multi-megabyte blob.
+    """
+    with _client(args) as client:
+        payload = client.games(start=args.start, game_filter=args.filter, provider=args.provider)
+
+    body = payload.get("data", payload) if isinstance(payload, dict) else {}
+    items = body.get("items") or []
+    category = body.get("category") or {}
+
+    digest = [
+        {
+            "id": g.get("id"),
+            "name": g.get("name"),
+            "code": g.get("code"),
+            "provider": (g.get("provider") or {}).get("name"),
+            "type": g.get("type"),
+            "rtp": g.get("overridden_rtp") or g.get("rtp"),
+        }
+        for g in items[: args.limit]
+    ]
+    _emit(
+        {
+            "category": category.get("name") or args.filter,
+            "total": body.get("total"),
+            "returned": len(digest),
+            "games": digest,
+        }
+    )
+    return 0
+
+
+def cmd_rates(args: argparse.Namespace) -> int:
+    with _client(args) as client:
+        _emit(client.exchange_rates())
+    return 0
+
+
+def cmd_call(args: argparse.Namespace) -> int:
+    """Escape hatch: call any documented path directly."""
+    body = json.loads(args.body) if args.body else None
+    with _client(args) as client:
+        _emit(client.request(args.method, args.path, json_body=body))
+    return 0
+
+
+def cmd_settings_update(args: argparse.Namespace) -> int:
+    """PATCH /api/v2/user/settings - account settings (not wagering)."""
+    settings = json.loads(args.settings)
+    with _client(args) as client:
+        _emit(client.update_settings(settings))
+    return 0
+
+
+def cmd_seed_set(args: argparse.Namespace) -> int:
+    """POST /api/v2/client-seed - set the provably-fair client seed."""
+    with _client(args) as client:
+        _emit(client.set_client_seed(args.seed))
+    return 0
+
+
+def cmd_seed_rotate(args: argparse.Namespace) -> int:
+    """POST /api/v2/client-seed/rotate - rotate the provably-fair client seed."""
+    with _client(args) as client:
+        _emit(client.rotate_client_seed(args.seed))
+    return 0
+
+
+def cmd_2fa_setup(args: argparse.Namespace) -> int:
+    """POST /api/v2/user/security/two-factor-setup."""
+    with _client(args) as client:
+        _emit(client.two_factor_setup())
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="automation_cli.py",
+        description=(
+            "Duel.com private-API client. Reads are open; state-changing commands "
+            "require --yes. No wagering: that surface is deliberately absent."
+        ),
+    )
+    parser.add_argument("--profile", default=str(DEFAULT_PROFILE), help="session profile path")
+    parser.add_argument("--spec", default="site_spec.json", help="path to site_spec.json")
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="opt in to state-changing calls (required by the action commands)",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("spec", help="summarise site_spec.json").set_defaults(func=cmd_spec)
+    sub.add_parser("whoami", help="report authentication status").set_defaults(func=cmd_whoami)
+
+    p = sub.add_parser("metadata", help="bootstrap/session document (public)")
+    p.add_argument("--new-uuid", action="store_true", help="mint a fresh device uuid first")
+    p.set_defaults(func=cmd_metadata)
+
+    p = sub.add_parser("login", help="log in (needs an externally obtained captcha token)")
+    p.add_argument("identifier", help="username or email")
+    p.add_argument("--password", default=None, help="or set DUEL_PASSWORD")
+    p.add_argument("--captcha-token", default=None, help="Turnstile token; or set DUEL_CAPTCHA_TOKEN")
+    p.set_defaults(func=cmd_login)
+
+    p = sub.add_parser("import-session", help="import a browser-captured session file")
+    p.add_argument("file", help="path to captured session JSON")
+    p.set_defaults(func=cmd_import_session)
+
+    p = sub.add_parser("games", help="game catalogue listing (public)")
+    p.add_argument("--start", type=int, default=0)
+    p.add_argument("--filter", default="popular")
+    p.add_argument("--provider", default="")
+    p.add_argument("--limit", type=int, default=10)
+    p.set_defaults(func=cmd_games)
+
+    sub.add_parser("rates", help="exchange rates (public)").set_defaults(func=cmd_rates)
+
+    p = sub.add_parser("call", help="call any documented path directly")
+    p.add_argument("method", choices=["GET", "POST", "PUT", "PATCH", "DELETE"])
+    p.add_argument("path", help="e.g. /api/v2/user/settings")
+    p.add_argument("--body", default=None, help="JSON request body")
+    p.set_defaults(func=cmd_call)
+
+    p = sub.add_parser("settings-update", help="PATCH /api/v2/user/settings (needs --yes)")
+    p.add_argument("settings", help="JSON object of settings to merge")
+    p.set_defaults(func=cmd_settings_update)
+
+    p = sub.add_parser("seed-set", help="POST /api/v2/client-seed (needs --yes)")
+    p.add_argument("seed", help="new provably-fair client seed")
+    p.set_defaults(func=cmd_seed_set)
+
+    p = sub.add_parser("seed-rotate", help="POST /api/v2/client-seed/rotate (needs --yes)")
+    p.add_argument("seed", help="new provably-fair client seed")
+    p.set_defaults(func=cmd_seed_rotate)
+
+    sub.add_parser("2fa-setup", help="POST /api/v2/user/security/two-factor-setup (needs --yes)").set_defaults(
+        func=cmd_2fa_setup
+    )
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return int(args.func(args))
+    except CaptchaRequired as exc:
+        print(f"captcha required: {exc}", file=sys.stderr)
+        return 3
+    except CloudflareChallenge as exc:
+        print(f"cloudflare challenge: {exc}", file=sys.stderr)
+        return 4
+    except AuthRequired as exc:
+        print(f"auth required: {exc}", file=sys.stderr)
+        return 5
+    except WriteNotAllowed as exc:
+        print(f"write not allowed: {exc}\n(hint: pass --yes to opt in)", file=sys.stderr)
+        return 6
+    except UnsupportedAction as exc:
+        print(f"unsupported action: {exc}", file=sys.stderr)
+        return 7
+    except DuelError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

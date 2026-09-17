@@ -1,0 +1,425 @@
+{
+  "spec_version": "0.1",
+  "site_name": "Duel.com",
+  "base_url": "https://duel.com",
+  "storage": {
+    "root_dir_name": ".private-api-automation",
+    "profile_dir": "profiles/default",
+    "auth_file": "profiles/default/session.json",
+    "captures_dir": "captures",
+    "spec_file": "site_spec.json"
+  },
+  "token_sources": [
+    {
+      "kind": "cookie",
+      "name": "duel",
+      "required": true,
+      "location": "cookie_jar",
+      "description": "Primary session cookie. Issued by GET /api/v2/metadata and rebound by POST /api/v2/auth/login. HttpOnly."
+    },
+    {
+      "kind": "cookie",
+      "name": "__cf_bm",
+      "required": true,
+      "location": "cookie_jar",
+      "description": "Cloudflare bot-management cookie, ~30 minute TTL. A 403 on replay almost always means this went stale, not that the path is wrong."
+    },
+    {
+      "kind": "header",
+      "name": "x-duel-device-identifier",
+      "required": true,
+      "location": "request_header",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "description": "Client-generated persistent v4 UUID. Mirrored in localStorage under 'security:uuid' and sent on every request. Server also accepts it as the ?uuid= query parameter on /metadata."
+    },
+    {
+      "kind": "header",
+      "name": "x-env-class",
+      "required": true,
+      "location": "request_header",
+      "description": "Environment class selector. Always 'main' for the production site."
+    },
+    {
+      "kind": "manual",
+      "name": "captcha_token",
+      "required": true,
+      "location": "manual",
+      "description": "Cloudflare Turnstile token. Feature flag captcha_on_login is enabled server-side, so login cannot be completed without a token minted by a real browser. Sent as {\"type\": \"turnstile_token\", \"token\": \"<token>\"} in the login body."
+    }
+  ],
+  "auth_failure_signals": [
+    {
+      "kind": "http_status",
+      "status_code": 401,
+      "description": "Session absent or expired. Restore a captured session or re-authenticate."
+    },
+    {
+      "kind": "http_status",
+      "status_code": 419,
+      "description": "Session-expired variant emitted by the SPA's axios interceptor."
+    },
+    {
+      "kind": "http_status",
+      "status_code": 403,
+      "description": "Cloudflare bot-management rejection (cf-mitigated header, HTML body). Treat as stale __cf_bm and re-capture the session."
+    },
+    {
+      "kind": "redirect_host",
+      "value": "/?logout",
+      "description": "The SPA's response interceptor force-logs-out on any responseURL containing '/?logout'."
+    }
+  ],
+  "recovery_ladder": [
+    {
+      "kind": "reload_cache",
+      "enabled": true,
+      "description": "Re-run GET /api/v2/metadata to rebuild the bootstrap document and, if needed, mint a fresh device uuid."
+    },
+    {
+      "kind": "refresh_tokens",
+      "enabled": true,
+      "description": "POST /api/v2/metadata/socket-token to refresh the short-lived realtime credential (JWT, ~30s TTL; the SPA backs off on HTTP 429)."
+    },
+    {
+      "kind": "headless_reauth",
+      "enabled": false,
+      "description": "Disabled by design: captcha_on_login is enabled, so unattended re-authentication is not possible. Re-capture from a real browser instead."
+    },
+    {
+      "kind": "fail",
+      "enabled": true,
+      "description": "Surface AuthRequired / CloudflareChallenge to the caller rather than silently retrying into an anti-bot flag."
+    }
+  ],
+  "endpoints": [
+    {
+      "id": "metadata",
+      "label": "Bootstrap / session document",
+      "likely_action": false,
+      "request": {
+        "method": "GET",
+        "url": "https://duel.com/api/v2/metadata?uuid={device_uuid}",
+        "headers": [
+          { "name": "x-duel-device-identifier", "value": "{device_uuid}" },
+          { "name": "x-env-class", "value": "main" }
+        ]
+      },
+      "notes": "Public. Issues the 'duel' session cookie, so it must be the first call. Returns user (null when anonymous), features (169 flags incl. captcha_on_login), turnstile_sitekey, session_id, socket_token, device, serverDate."
+    },
+    {
+      "id": "metadata.socket-token",
+      "label": "Realtime credential refresh",
+      "likely_action": false,
+      "request": {
+        "method": "POST",
+        "url": "https://duel.com/api/v2/metadata/socket-token",
+        "headers": [
+          { "name": "x-duel-device-identifier", "value": "{device_uuid}" },
+          { "name": "x-env-class", "value": "main" }
+        ],
+        "body_text": "{}"
+      },
+      "notes": "Returns socket_token + socket_signature for the pvp.duel.com socket.io handshake."
+    },
+    {
+      "id": "games",
+      "label": "Game catalogue listing",
+      "likely_action": false,
+      "request": {
+        "method": "GET",
+        "url": "https://duel.com/api/v2/games?start=0&search=&filter=popular&provider=&sort=recommended",
+        "headers": [
+          { "name": "x-duel-device-identifier", "value": "{device_uuid}" },
+          { "name": "x-env-class", "value": "main" }
+        ]
+      },
+      "notes": "Public. Confirmed live during capture. Uses start/filter, not page/per_page. filter values seen: popular."
+    },
+    {
+      "id": "slots",
+      "label": "Slot catalogue",
+      "likely_action": false,
+      "request": {
+        "method": "GET",
+        "url": "https://duel.com/api/v2/slots",
+        "headers": [
+          { "name": "x-duel-device-identifier", "value": "{device_uuid}" },
+          { "name": "x-env-class", "value": "main" }
+        ]
+      },
+      "notes": "Public. Confirmed live during capture."
+    },
+    {
+      "id": "metadata.exchange-rates",
+      "label": "Exchange rates",
+      "likely_action": false,
+      "request": {
+        "method": "GET",
+        "url": "https://duel.com/api/v2/metadata/exchange-rates",
+        "headers": [
+          { "name": "x-duel-device-identifier", "value": "{device_uuid}" },
+          { "name": "x-env-class", "value": "main" }
+        ]
+      },
+      "notes": "Public. Confirmed live during capture."
+    },
+    {
+      "id": "trade.metadata.payment-methods",
+      "label": "Deposit payment methods",
+      "likely_action": false,
+      "request": {
+        "method": "GET",
+        "url": "https://duel.com/api/v2/trade/metadata/payment-methods",
+        "headers": [
+          { "name": "x-duel-device-identifier", "value": "{device_uuid}" },
+          { "name": "x-env-class", "value": "main" }
+        ]
+      },
+      "notes": "Public. Confirmed live during capture."
+    },
+    {
+      "id": "trade.crypto.withdraw.methods",
+      "label": "Withdrawal methods",
+      "likely_action": false,
+      "request": {
+        "method": "GET",
+        "url": "https://duel.com/api/v2/trade/crypto/withdraw/methods",
+        "headers": [
+          { "name": "x-duel-device-identifier", "value": "{device_uuid}" },
+          { "name": "x-env-class", "value": "main" }
+        ]
+      },
+      "notes": "Public method listing only. The accompanying withdrawal *submission* endpoint is deliberately not wired - see metadata.out_of_scope."
+    },
+    {
+      "id": "user.zero-edge-rakeback.status",
+      "label": "Zero-edge rakeback status",
+      "likely_action": false,
+      "request": {
+        "method": "GET",
+        "url": "https://duel.com/api/v2/user/zero-edge-rakeback/status",
+        "headers": [
+          { "name": "x-duel-device-identifier", "value": "{device_uuid}" },
+          { "name": "x-env-class", "value": "main" }
+        ]
+      },
+      "notes": "Public. Confirmed live during capture."
+    },
+    {
+      "id": "auth.login",
+      "label": "Log in",
+      "likely_action": true,
+      "request": {
+        "method": "POST",
+        "url": "https://duel.com/api/v2/auth/login",
+        "headers": [
+          { "name": "Content-Type", "value": "application/json" },
+          { "name": "x-duel-device-identifier", "value": "{device_uuid}" },
+          { "name": "x-env-class", "value": "main" }
+        ],
+        "body_text": "{\"username\":\"<username>|email\":\"<email>\",\"password\":\"<password>\",\"type\":\"turnstile_token\",\"token\":\"<captcha_token>\"}"
+      },
+      "notes": "Gated by Cloudflare Turnstile (captcha_on_login enabled). The SPA sends 'email' when the identifier contains '@', else 'username'. Captcha pair is {type, token}, not {turnstile_token}."
+    },
+    {
+      "id": "auth.logout",
+      "label": "Log out",
+      "likely_action": true,
+      "request": {
+        "method": "POST",
+        "url": "https://duel.com/api/v2/auth/logout",
+        "headers": [
+          { "name": "Content-Type", "value": "application/json" },
+          { "name": "x-duel-device-identifier", "value": "{device_uuid}" },
+          { "name": "x-env-class", "value": "main" }
+        ],
+        "body_text": "{\"uuid\":\"{device_uuid}\",\"end_all_sessions\":false}"
+      },
+      "notes": "Docs also list POST /api/v2/auth/logout/all for ending every session."
+    },
+    {
+      "id": "user.profile",
+      "label": "Current user profile",
+      "likely_action": false,
+      "request": {
+        "method": "GET",
+        "url": "https://duel.com/api/v2/user",
+        "headers": [
+          { "name": "x-duel-device-identifier", "value": "{device_uuid}" },
+          { "name": "x-env-class", "value": "main" }
+        ]
+      },
+      "notes": "Authenticated. Path confirmed in bundle; unverified live because unattended login is captcha-blocked."
+    },
+    {
+      "id": "user.settings",
+      "label": "User settings",
+      "likely_action": false,
+      "request": {
+        "method": "GET",
+        "url": "https://duel.com/api/v2/user/settings",
+        "headers": [
+          { "name": "x-duel-device-identifier", "value": "{device_uuid}" },
+          { "name": "x-env-class", "value": "main" }
+        ]
+      },
+      "notes": "Authenticated. Path confirmed in bundle; unverified live."
+    },
+    {
+      "id": "user.kyc",
+      "label": "KYC status",
+      "likely_action": false,
+      "request": {
+        "method": "GET",
+        "url": "https://duel.com/api/v2/user/kyc",
+        "headers": [
+          { "name": "x-duel-device-identifier", "value": "{device_uuid}" },
+          { "name": "x-env-class", "value": "main" }
+        ]
+      },
+      "notes": "Authenticated. Path confirmed in bundle; unverified live."
+    },
+    {
+      "id": "client-seed",
+      "label": "Provably-fair client seed",
+      "likely_action": false,
+      "request": {
+        "method": "GET",
+        "url": "https://duel.com/api/v2/client-seed",
+        "headers": [
+          { "name": "x-duel-device-identifier", "value": "{device_uuid}" },
+          { "name": "x-env-class", "value": "main" }
+        ]
+      },
+      "notes": "Authenticated. Path confirmed in bundle; unverified live."
+    },
+    {
+      "id": "user.settings.update",
+      "label": "Update account settings",
+      "likely_action": true,
+      "request": {
+        "method": "PATCH",
+        "url": "https://duel.com/api/v2/user/settings",
+        "headers": [
+          { "name": "Content-Type", "value": "application/json" },
+          { "name": "x-duel-device-identifier", "value": "{device_uuid}" },
+          { "name": "x-env-class", "value": "main" }
+        ],
+        "body_text": "{\"settings\":{...}}"
+      },
+      "notes": "Bundle-derived (verified service definition: `Zk=new ...(`api/v2/user/settings`)` with `patch(``,{settings:e})`). Requires a session; unverified live. State-changing: the client requires an explicit opt-in."
+    },
+    {
+      "id": "client-seed.set",
+      "label": "Set provably-fair client seed",
+      "likely_action": true,
+      "request": {
+        "method": "POST",
+        "url": "https://duel.com/api/v2/client-seed",
+        "headers": [
+          { "name": "Content-Type", "value": "application/json" },
+          { "name": "x-duel-device-identifier", "value": "{device_uuid}" },
+          { "name": "x-env-class", "value": "main" }
+        ],
+        "body_text": "{\"client_seed\":\"<seed>\"}"
+      },
+      "notes": "Bundle-derived (`tJ=new ...(`api/v2/client-seed`)`, `post(``,{client_seed:n})`). Requires a session; unverified live."
+    },
+    {
+      "id": "client-seed.rotate",
+      "label": "Rotate provably-fair client seed",
+      "likely_action": true,
+      "request": {
+        "method": "POST",
+        "url": "https://duel.com/api/v2/client-seed/rotate",
+        "headers": [
+          { "name": "Content-Type", "value": "application/json" },
+          { "name": "x-duel-device-identifier", "value": "{device_uuid}" },
+          { "name": "x-env-class", "value": "main" }
+        ],
+        "body_text": "{\"client_seed\":\"<seed>\"}"
+      },
+      "notes": "Bundle-derived (`post(`rotate`,{client_seed:i})`). Requires a session; unverified live."
+    },
+    {
+      "id": "user.security.token",
+      "label": "Request security/2FA challenge",
+      "likely_action": true,
+      "request": {
+        "method": "POST",
+        "url": "https://duel.com/api/v2/user/security/token",
+        "headers": [
+          { "name": "Content-Type", "value": "application/json" },
+          { "name": "x-duel-device-identifier", "value": "{device_uuid}" },
+          { "name": "x-env-class", "value": "main" }
+        ],
+        "body_text": "{\"uuid\":\"{device_uuid}\",\"type\":\"standard\"}"
+      },
+      "notes": "Bundle-derived (`fZ=new ...(`api/v2/user/security`)`, `post(`token`,{uuid,code,type,remember_device,sid})`). token type enum: silent|standard|onetime|session-auth. Requires a session; unverified live."
+    },
+    {
+      "id": "user.security.two-factor-setup",
+      "label": "Begin 2FA setup",
+      "likely_action": true,
+      "request": {
+        "method": "POST",
+        "url": "https://duel.com/api/v2/user/security/two-factor-setup",
+        "headers": [
+          { "name": "Content-Type", "value": "application/json" },
+          { "name": "x-duel-device-identifier", "value": "{device_uuid}" },
+          { "name": "x-env-class", "value": "main" }
+        ],
+        "body_text": "{}"
+      },
+      "notes": "Bundle-derived. Sibling endpoints exist under the same service: 2fa-verify, two-factor-enable, two-factor-disable, two-factor-recovery-code. Requires a session; unverified live."
+    }
+  ],
+  "metadata": {
+    "provenance": {
+      "method": "bundle analysis + live browser capture",
+      "bundle": "/assets/index-Cs9Avd2r.js",
+      "bundle_sha256_prefix": "518cc628",
+      "client": "Vue 3 SPA, axios-based ApiClient class, same-origin /api/v2",
+      "confirmed_live": [
+        "GET /api/v2/metadata",
+        "GET /api/v2/games",
+        "GET /api/v2/slots",
+        "GET /api/v2/metadata/exchange-rates",
+        "GET /api/v2/trade/metadata/payment-methods",
+        "GET /api/v2/trade/crypto/withdraw/methods",
+        "GET /api/v2/user/zero-edge-rakeback/status"
+      ]
+    },
+    "session_model": "cookie-based (duel + __cf_bm); no bearer token",
+    "captcha": {
+      "provider": "Cloudflare Turnstile",
+      "feature_flag": "captcha_on_login",
+      "enabled": true,
+      "friendly_captcha_enabled": false
+    },
+    "realtime": {
+      "transport": "socket.io",
+      "url": "https://pvp.duel.com",
+      "auth": "{uid, authorizationToken: socket_token, signature: socket_signature, uuid}",
+      "namespaces_seen": [
+        "Chat",
+        "Roulette",
+        "Coinflip",
+        "Crash",
+        "Notifications",
+        "RouletteBattles",
+        "GameIntegration",
+        "BetFeed",
+        "Exchange",
+        "RockPaperScissors"
+      ]
+    },
+    "out_of_scope": [
+      "Bet / wager placement endpoints",
+      "Deposit and withdrawal submission endpoints",
+      "Any endpoint that moves money"
+    ],
+    "out_of_scope_reason": "Duel.com is a real-money gaming site. Automated wagering was deliberately excluded from this client: it almost certainly violates the operator's terms of service, risks account closure and forfeiture of funds, and can cause rapid financial loss. The spec records read-only and session endpoints only.",
+    "terms_of_service_warning": "Automated access to an account you do not operate, or any automated wagering, is out of scope and unsupported. Use only against an account you own, and check the operator's terms first."
+  }
+}

@@ -1,0 +1,49 @@
+{
+ "device_uuid": "5ebba730-356a-4c9e-92a3-55873dcee716",
+ "results": {
+  "GET /api/v2/games?page=1&per_page=5": {
+   "status": 200,
+   "body": "{\"success\":true,\"data\":{\"items\":[{\"id\":1,\"code\":\"evo_crazy_time\",\"game_options\":null,\"type\":\"Game Show\",\"name\":\"Crazy Time\",\"overridden_name\":null,\"additional_config\":null,\"integrator\":\"st8\",\"provider"
+  },
+  "GET /api/v2/user": {
+   "status": 401,
+   "body": "{\"error\":\"Please login to continue!\",\"message\":\"Please login to continue!\"}"
+  },
+  "GET /api/v2/user/settings": {
+   "status": 401,
+   "body": "{\"error\":\"Please login to continue!\",\"message\":\"Please login to continue!\"}"
+  },
+  "GET /api/v2/user/kyc": {
+   "status": 401,
+   "body": "{\"error\":\"Please login to continue!\",\"message\":\"Please login to continue!\"}"
+  },
+  "GET /api/v2/client-seed": {
+   "status": 401,
+   "body": "{\"error\":\"Please login to continue!\",\"message\":\"Please login to continue!\"}"
+  },
+  "GET /api/v2/user/security": {
+   "status": 404,
+   "body": "{\"success\":false,\"message\":\"Not Found\"}"
+  },
+  "GET /api/v2/zero-edge/rakeback": {
+   "status": 404,
+   "body": "{\"success\":false,\"message\":\"Not Found\"}"
+  },
+  "GET /api/v2/trade": {
+   "status": 404,
+   "body": "{\"success\":false,\"message\":\"Not Found\"}"
+  },
+  "POST /api/v2/metadata/socket-token": {
+   "status": 429,
+   "body": "<!DOCTYPE html>\n<html>\n   <head>\n      <meta charset=\"utf-8\">\n      <title>IP or Country challenge blocked custom page</title>\n      <style type=\"text/css\">\n         body{padding:8rem 2rem; background"
+  },
+  "POST /api/v2/auth/logout": {
+   "status": 429,
+   "body": "<!DOCTYPE html>\n<html>\n   <head>\n      <meta charset=\"utf-8\">\n      <title>IP or Country challenge blocked custom page</title>\n      <style type=\"text/css\">\n         body{padding:8rem 2rem; background"
+  },
+  "POST /api/v2/auth/login": {
+   "status": 429,
+   "body": "<!DOCTYPE html>\n<html>\n   <head>\n      <meta charset=\"utf-8\">\n      <title>IP or Country challenge blocked custom page</title>\n      <style type=\"text/css\">\n         body{padding:8rem 2rem; background"
+  }
+ }
+}
