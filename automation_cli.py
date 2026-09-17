@@ -11,7 +11,8 @@ Examples
     python automation_cli.py games --limit 5
     python automation_cli.py call GET /api/v2/user/settings
 
-Read-only by design: there is no wagering command. See README.md.
+Betting is gated: only `dice-bet` can move money (dry-run by default; a live
+bet needs --yes, --enable-betting, --live and --confirm-bet together). See README.md.
 """
 
 from __future__ import annotations
@@ -202,6 +203,73 @@ def cmd_betfeed(args: argparse.Namespace) -> int:
         }
     )
     return 0 if counts else 1
+
+
+def cmd_dice_bet(args: argparse.Namespace) -> int:
+    """Place one dice bet - or dry-run it (the default).
+
+    REAL MONEY. Automated wagering almost certainly violates the operator's
+    terms, risks account closure and forfeiture, and can lose funds fast -
+    check the terms first, never stake more than you can afford to lose, and
+    prefer dry runs while developing. If gambling stops being fun, stop.
+
+    A dry run validates the parameters and prints the would-be payload
+    without sending anything. A live bet needs all four gates: --yes (write
+    opt-in) + --enable-betting + --live + --confirm-bet, and the stake must
+    fit --max-stake.
+    """
+    try:
+        if not args.live:
+            with _client(args) as client:
+                result = client.place_dice_bet(
+                    args.amount,
+                    bet_type=args.side,
+                    currency=args.currency,
+                    target=args.target,
+                    security_token=args.security_token,
+                )
+            _emit(result)
+            return 0
+        missing = [
+            flag
+            for flag, present in (
+                ("--yes", getattr(args, "yes", False)),
+                ("--enable-betting", args.enable_betting),
+                ("--confirm-bet", args.confirm_bet),
+            )
+            if not present
+        ]
+        if missing:
+            print(
+                f"dice-bet: a live bet needs {' '.join(missing)} "
+                "(dry run is the default; run without --live to validate only)",
+                file=sys.stderr,
+            )
+            return 1
+        print(
+            "REAL-MONEY dice bet: automated wagering almost certainly violates the "
+            "operator's terms and can lose funds fast. Proceeding only because "
+            "--yes, --enable-betting, --live and --confirm-bet were all passed.",
+            file=sys.stderr,
+        )
+        with _client(args) as client:
+            client.betting_enabled = bool(args.enable_betting)
+            client.max_stake = args.max_stake
+            result = client.place_dice_bet(
+                args.amount,
+                bet_type=args.side,
+                currency=args.currency,
+                target=args.target,
+                security_token=args.security_token,
+                confirm=args.confirm_bet,
+                dry_run=False,
+            )
+            client.save()
+        _emit(result if isinstance(result, dict) else {"result": result})
+        return 0
+    except ValueError as exc:
+        print(f"dice-bet: invalid parameters: {exc}", file=sys.stderr)
+        return 1
 
 
 def cmd_metadata(args: argparse.Namespace) -> int:
@@ -406,6 +474,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--duration", type=float, default=60.0, help="seconds to listen before disconnecting")
     p.add_argument("--out", default=None, help="append raw events to this JSONL file")
     p.set_defaults(func=cmd_betfeed)
+    p = sub.add_parser(
+        "dice-bet",
+        help="place one dice bet (REAL MONEY; dry-run unless --live --confirm-bet)",
+    )
+    p.add_argument("--amount", required=True, help="stake as a decimal string, e.g. 0.5")
+    p.add_argument("--side", required=True, choices=["OVER", "UNDER"], help="roll over or under the target")
+    p.add_argument("--currency", required=True, help="currency code, e.g. USDT")
+    p.add_argument("--target", required=True, help="roll target x100 as an integer string, e.g. 5005 for 50.05")
+    p.add_argument("--security-token", default="", help="security token, or empty when no extra security is required")
+    p.add_argument("--max-stake", type=float, default=1.0, help="client-side per-bet cap in the bet currency")
+    p.add_argument("--enable-betting", action="store_true", help="opt this client into real-money betting")
+    p.add_argument("--live", action="store_true", help="actually send the bet (default is a dry run)")
+    p.add_argument("--confirm-bet", action="store_true", help="per-call confirmation for the live bet")
+    p.set_defaults(func=cmd_dice_bet)
     sub.add_parser("whoami", help="report authentication status").set_defaults(func=cmd_whoami)
     sub.add_parser(
         "session-status",

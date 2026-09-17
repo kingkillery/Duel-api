@@ -372,6 +372,36 @@
         "body_text": "{}"
       },
       "notes": "Bundle-derived. Sibling endpoints exist under the same service: 2fa-verify, two-factor-enable, two-factor-disable, two-factor-recovery-code. Requires a session; unverified live."
+    },
+    {
+      "id": "dice.config",
+      "label": "Dice limits and rules",
+      "likely_action": false,
+      "request": {
+        "method": "GET",
+        "url": "https://duel.com/api/v2/dice/config",
+        "headers": [
+          { "name": "x-duel-device-identifier", "value": "{device_uuid}" },
+          { "name": "x-env-class", "value": "main" }
+        ]
+      },
+      "notes": "Bundle-derived (useDice chunk: `m.get('config')`). Read-only."
+    },
+    {
+      "id": "dice.bet",
+      "label": "Place a dice bet (REAL MONEY)",
+      "likely_action": true,
+      "request": {
+        "method": "POST",
+        "url": "https://duel.com/api/v2/dice/bet",
+        "headers": [
+          { "name": "Content-Type", "value": "application/json" },
+          { "name": "x-duel-device-identifier", "value": "{device_uuid}" },
+          { "name": "x-env-class", "value": "main" }
+        ],
+        "body_text": "{\"amount\":\"<crypto amount string>\",\"bet_type\":\"OVER|UNDER\",\"currency\":\"<code>\",\"security_token\":\"<token or empty>\",\"target\":\"<roll target x100 as integer string>\"}"
+      },
+      "notes": "Bundle-derived (useDice chunk: `m.post('bet', e)`; manual bet passes {amount, bet_type OVER|UNDER, currency, security_token, target}; target is the roll target x100, e.g. '5005' for 50.05. Response is {data: {round: {nonce, client_seed, server_seed_hashed, ...}}}. REAL-MONEY wagering: automated use almost certainly violates the operator's terms, risks account closure and forfeiture, and can lose funds fast. Exposed only via the reviewed place_dice_bet() path (dry-run default, betting_enabled + confirm + max_stake gates). security_token is '' when no extra security is required, else a token from POST /api/v2/user/security/token (may need a 2FA code). Batch/autobet variants exist in the SPA but are not wired."
     }
   ],
   "metadata": {
@@ -441,11 +471,22 @@
       ]
     },
     "out_of_scope": [
-      "Bet / wager placement endpoints",
       "Deposit and withdrawal submission endpoints",
-      "Any endpoint that moves money"
+      "Batch/autobet wager variants",
+      "Any money movement other than the explicitly gated dice betting path"
     ],
-    "out_of_scope_reason": "Duel.com is a real-money gaming site. Automated wagering was deliberately excluded from this client: it almost certainly violates the operator's terms of service, risks account closure and forfeiture of funds, and can cause rapid financial loss. The spec records read-only and session endpoints only.",
-    "terms_of_service_warning": "Automated access to an account you do not operate, or any automated wagering, is out of scope and unsupported. Use only against an account you own, and check the operator's terms first."
+    "out_of_scope_reason": "Duel.com is a real-money gaming site. Deposit, withdrawal and batch wagering stay excluded: automating them almost certainly violates the operator's terms of service, risks account closure and forfeiture of funds, and can cause rapid financial loss.",
+    "wagering": {
+      "status": "explicitly gated, not open",
+      "path": "place_dice_bet() in automation_client.py plus the `dice-bet` CLI command - the only code permitted to touch money-moving endpoints",
+      "gates": [
+        "parameters validated before anything is sent",
+        "dry_run=True by default: validates and returns the would-be payload without sending",
+        "live bets additionally require DuelClient(betting_enabled=True), per-call confirm=True, and amount <= max_stake",
+        "the generic request()/call path still refuses all money verbs unconditionally"
+      ],
+      "warnings": "Automated wagering almost certainly violates the operator's terms, risks account closure and forfeiture of funds, and can lose real money fast. Use only against an account you own, check the operator's terms first, never stake more than you can afford to lose, and prefer dry runs while developing. If gambling stops being fun, stop - see a problem-gambling helpline in your jurisdiction (e.g. 1-800-GAMBLER in the US, GamStop/GamCare in the UK)."
+    },
+    "terms_of_service_warning": "Automated access to an account you do not operate is out of scope and unsupported. Automated wagering is available only through the explicitly gated dice path, against an account you own, after checking the operator's terms."
   }
 }

@@ -68,27 +68,42 @@ def test_headless_reauth_is_disabled(spec: dict) -> None:
     assert ladder["fail"]["enabled"] is True
 
 
-def test_wagering_is_out_of_scope(spec: dict) -> None:
-    """No endpoint may place a bet or submit a money movement.
+def test_wagering_is_explicitly_gated(spec: dict) -> None:
+    """Wagering exists only through reviewed, gated paths - never by accident.
 
-    Only the *structural* identifier (id + URL path) is inspected: human-facing
-    labels legitimately mention money ("Deposit payment methods") for read-only
-    listings, and read-only ``*/methods`` listings are explicitly allowed.
+    Dice betting is supported via the dedicated place_dice_bet() path
+    (validated parameters, dry-run default, betting_enabled + confirm +
+    max_stake gates). Everything else money-moving stays banned: no endpoint
+    id/URL may structurally touch deposit/withdrawal, and the generic
+    request()/call path still refuses all money verbs unconditionally (see
+    test_money_moving_paths_are_refused_even_with_writes_enabled and
+    test_generic_request_still_refuses_the_dice_bet_path).
     """
     meta = spec["metadata"]
     assert meta["out_of_scope"], "money-moving endpoints must be explicitly excluded"
     assert meta["out_of_scope_reason"]
+    assert meta.get("wagering"), "the gated wagering path must be documented"
+    assert meta["wagering"]["gates"], "the gates must be enumerated"
 
-    money_verbs = ("bet", "wager", "stake", "deposit", "withdraw")
+    by_id = {ep["id"]: ep for ep in spec["endpoints"]}
+    assert by_id["dice.bet"]["request"]["method"] == "POST"
+    assert by_id["dice.bet"]["likely_action"] is True
+    assert by_id["dice.config"]["request"]["method"] == "GET"
+
+    banned = ("deposit", "withdraw")
     for ep in spec["endpoints"]:
         structural = f"{ep['id']} {ep['request']['url'].split('?')[0]}".lower()
         # A read-only listing of available methods is fine; submission is not.
         if structural.rstrip("/").endswith("methods"):
             continue
-        for verb in money_verbs:
+        # The reviewed dice path is allowlisted; everything else is checked.
+        if ep["id"] in ("dice.bet", "dice.config"):
+            continue
+        for verb in banned:
             assert verb not in structural, f"{ep['id']} touches '{verb}'"
         # Every non-GET endpoint must be explicitly reviewed and listed here.
-        # Session lifecycle plus account management only - no wagering.
+        # Session lifecycle plus account management plus the gated dice bet -
+        # nothing else moves state.
         if ep["request"]["method"] != "GET":
             reviewed_writes = {
                 "metadata.socket-token",  # token fetch, not a mutation
@@ -99,11 +114,11 @@ def test_wagering_is_out_of_scope(spec: dict) -> None:
                 "client-seed.rotate",
                 "user.security.token",
                 "user.security.two-factor-setup",
+                "dice.bet",  # gated: place_dice_bet() only, dry-run default
             }
             assert ep["id"] in reviewed_writes, (
                 f"unreviewed non-GET endpoint: {ep['id']}"
             )
-
 
 def test_storage_layout_matches_project(spec: dict) -> None:
     layout = spec["storage"]

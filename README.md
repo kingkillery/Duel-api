@@ -14,23 +14,29 @@ confirmed against live browser traffic.
 
 Duel.com is a **real-money gaming site**. Reads are open; writes are gated.
 
-- **No wagering.** Bet/wager placement endpoints were identified during recon and
-  deliberately **not** implemented. The write guard refuses any path containing
-  `bet`, `wager`, `stake`, `deposit`, `withdraw`, `buy` or `sell` — at the single
-  chokepoint in `DuelClient.request()`, so no entry point (including the CLI
-  `call` escape hatch) can bypass it.
-- **No deposit or withdrawal submission.** Only read-only method *listings* are exposed.
+- **Real-money betting exists, gated four deep.** Dice betting
+  (`place_dice_bet()` / the `dice-bet` CLI command) is the only path that can
+  move money: validated parameters, dry-run default, `betting_enabled` plus
+  per-call `confirm` plus a `max_stake` cap. The generic `request()` path and
+  the CLI `call` escape hatch still refuse every money verb — `bet`, `wager`,
+  `stake`, `deposit`, `withdraw`, `buy`, `sell` — unconditionally, at the
+  single chokepoint in `DuelClient.request()`.
+- **No deposit, withdrawal, or batch/autobet.** Only read-only method
+  *listings* and the single manual dice bet are wired.
 - **Account management is supported, but opt-in.** Settings, provably-fair client
   seed, and 2FA endpoints are wired; they require `DuelClient(allow_writes=True)`
   (or `confirm=True` per call, or `--yes` on the CLI).
-- Automated access almost certainly violates the operator's terms of service. The
-  practical risks are account closure, forfeiture of funds, and (for wagering
-  automation) rapid financial loss.
+- Automated wagering almost certainly violates the operator's terms of service. The
+  practical risks are account closure, forfeiture of funds, and rapid financial
+  loss. Never stake more than you can afford to lose, and prefer dry runs while
+  developing. If gambling stops being fun, stop - problem-gambling helplines exist
+  in most jurisdictions (e.g. 1-800-GAMBLER in the US, GamStop/GamCare in the UK).
 - Use only against an account **you own**.
 
-`site_spec.json → metadata.out_of_scope` records the exclusion, and
-`tests/test_spec_loads.py::test_wagering_is_out_of_scope` + the money-path tests in
-`tests/test_client.py` enforce it.
+`site_spec.json → metadata.wagering` documents the betting gates,
+`metadata.out_of_scope` records the remaining exclusions, and
+`tests/test_spec_loads.py::test_wagering_is_explicitly_gated` + the money-path tests in
+`tests/test_client.py` enforce them.
 
 ---
 
@@ -69,6 +75,8 @@ python automation_cli.py whoami        # are we authenticated?
 python automation_cli.py session-status # session age & staleness (makes no request)
 python automation_cli.py spec-check     # live bundle hash vs the spec (drift tripwire)
 python automation_cli.py betfeed --duration 30   # record live BetFeed events (read-only)
+python automation_cli.py dice-bet --amount 0.5 --side UNDER --currency USDT --target 5005  # dry run (default: sends nothing)
+python automation_cli.py --yes dice-bet --amount 0.5 --side UNDER --currency USDT --target 5005 --enable-betting --live --confirm-bet  # REAL MONEY
 ```
 
 ---

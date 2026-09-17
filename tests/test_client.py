@@ -381,6 +381,133 @@ def test_money_moving_paths_are_refused_even_with_writes_enabled(path: str) -> N
     assert seen == []
 
 
+def _betting_client(seen: list, **kwargs) -> DuelClient:
+    """Recording client with betting explicitly enabled (max_stake 10)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else None
+        seen.append((request.method, request.url.path, body))
+        return httpx.Response(200, json={"ok": True})
+
+    params = {"allow_writes": True, "betting_enabled": True, "max_stake": 10.0}
+    params.update(kwargs)
+    return DuelClient(
+        profile=Path(tempfile.mkdtemp()) / "session.json",
+        transport=httpx.MockTransport(handler),
+        **params,
+    )
+
+
+def test_dice_bet_dry_run_validates_and_sends_nothing() -> None:
+    """The default is zero-risk: validate, return the payload, send nothing."""
+    seen: list = []
+    with _recording_client(seen, allow_writes=False) as client:
+        result = client.place_dice_bet(
+            "0.5", bet_type="under", currency="USDT", target="5005"
+        )
+    assert seen == []
+    assert result["dry_run"] is True
+    assert result["method"] == "POST"
+    assert result["path"] == "/api/v2/dice/bet"
+    assert result["payload"] == {
+        "amount": "0.5",
+        "bet_type": "UNDER",
+        "currency": "USDT",
+        "security_token": "",
+        "target": "5005",
+    }
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"amount": "0", "bet_type": "OVER", "currency": "USDT", "target": "5005"},
+        {"amount": "-1", "bet_type": "OVER", "currency": "USDT", "target": "5005"},
+        {"amount": "abc", "bet_type": "OVER", "currency": "USDT", "target": "5005"},
+        {"amount": "0.5", "bet_type": "SIDEWAYS", "currency": "USDT", "target": "5005"},
+        {"amount": "0.5", "bet_type": "OVER", "currency": "", "target": "5005"},
+        {"amount": "0.5", "bet_type": "OVER", "currency": "USDT", "target": "50.05"},
+        {"amount": "0.5", "bet_type": "OVER", "currency": "USDT", "target": "99"},
+        {"amount": "0.5", "bet_type": "OVER", "currency": "USDT", "target": "9900"},
+    ],
+)
+def test_dice_bet_rejects_bad_parameters_before_anything_else(kwargs) -> None:
+    """Validation runs first: even dry runs reject bad parameters."""
+    seen: list = []
+    with _recording_client(seen, allow_writes=False) as client:
+        with pytest.raises(ValueError):
+            client.place_dice_bet(**kwargs)
+    assert seen == []
+
+
+def test_dice_bet_live_needs_betting_enabled_and_confirm() -> None:
+    """Double opt-in: betting_enabled on the client AND confirm per call."""
+    seen: list = []
+    with _recording_client(seen, allow_writes=True) as client:
+        with pytest.raises(WriteNotAllowed):
+            client.place_dice_bet(
+                "0.5", bet_type="OVER", currency="USDT", target="5005", dry_run=False
+            )
+    with _recording_client(seen, allow_writes=True) as client:
+        client.betting_enabled = True
+        with pytest.raises(WriteNotAllowed):
+            client.place_dice_bet(
+                "0.5", bet_type="OVER", currency="USDT", target="5005", dry_run=False
+            )
+    assert seen == []
+
+
+def test_dice_bet_live_enforces_max_stake() -> None:
+    seen: list = []
+    with _betting_client(seen) as client:
+        with pytest.raises(ValueError, match="max_stake"):
+            client.place_dice_bet(
+                "50", bet_type="OVER", currency="USDT", target="5005",
+                confirm=True, dry_run=False,
+            )
+    assert seen == []
+
+
+def test_dice_bet_live_sends_the_bundle_verified_payload() -> None:
+    seen: list = []
+    with _betting_client(seen) as client:
+        result = client.place_dice_bet(
+            "0.5", bet_type="OVER", currency="USDT", target="5005",
+            security_token="tok", confirm=True, dry_run=False,
+        )
+    assert seen == [
+        (
+            "POST",
+            "/api/v2/dice/bet",
+            {
+                "amount": "0.5",
+                "bet_type": "OVER",
+                "currency": "USDT",
+                "security_token": "tok",
+                "target": "5005",
+            },
+        )
+    ]
+    assert result == {"ok": True}
+
+
+def test_generic_request_still_refuses_the_dice_bet_path() -> None:
+    """The escape hatch stays shut: only place_dice_bet() may bet."""
+    seen: list = []
+    with _recording_client(seen, allow_writes=True) as client:
+        client.betting_enabled = True
+        with pytest.raises(UnsupportedAction):
+            client.request("POST", "/api/v2/dice/bet", json_body={})
+    assert seen == []
+
+
+def test_dice_config_is_read_only() -> None:
+    seen: list = []
+    with _recording_client(seen, allow_writes=False) as client:
+        client.dice_config()
+    assert seen == [("GET", "/api/v2/dice/config", None)]
+
+
 def test_socket_token_post_is_allowed_without_opt_in() -> None:
     """Spec recovery_ladder.refresh_tokens must work on a default (read-only) client.
 

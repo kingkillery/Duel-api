@@ -26,6 +26,7 @@ import json
 import os
 import time
 import uuid as _uuid
+from decimal import Decimal, InvalidOperation
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -117,6 +118,16 @@ _READ_LIKE_POSTS = (
     "/api/v2/metadata/socket-token",
 )
 
+# Betting safety: dice wagers are only possible through the reviewed
+# place_dice_bet() path (never the generic request()/call escape hatch),
+# default to a dry run, and are capped per bet. This is a client-side
+# tripwire, not a substitute for the server's own limits or for checking
+# the operator's terms before automating real-money play.
+DEFAULT_MAX_STAKE = 1.0
+DICE_BET_PATH = "/api/v2/dice/bet"
+DICE_CONFIG_PATH = "/api/v2/dice/config"
+DICE_BET_TYPES = ("OVER", "UNDER")
+
 
 @dataclass
 class Session:
@@ -196,12 +207,17 @@ class DuelClient:
         timeout: float = 30.0,
         transport: httpx.BaseTransport | None = None,
         allow_writes: bool = False,
+        betting_enabled: bool = False,
+        max_stake: float = DEFAULT_MAX_STAKE,
         auto_refresh: bool = True,
         max_429_retries: int = DEFAULT_MAX_429_RETRIES,
         sleep: Callable[[float], None] | None = None,
     ) -> None:
         # State-changing calls are opt-in. Read-only is the default posture.
         self.allow_writes = allow_writes
+        # Real-money betting is a further explicit opt-in with a per-bet cap.
+        self.betting_enabled = betting_enabled
+        self.max_stake = max_stake
         # Re-mint __cf_bm once on a Cloudflare challenge before failing.
         self.auto_refresh = auto_refresh
         self._refreshing = False
@@ -307,6 +323,7 @@ class DuelClient:
         confirm: bool = False,
         auto_refresh: bool | None = None,
         _attempt: int = 0,
+        _allow_money: bool = False,
     ) -> Any:
         """Perform one API call and return the decoded JSON body.
 
@@ -319,10 +336,11 @@ class DuelClient:
         ``auto_refresh=False``, so this can never loop.
         """
         attempt = _attempt
+        allow_money = _allow_money
         url = path if path.startswith("/") else f"{API_PREFIX}/{path}"
         # The guard lives here, not only in the named action methods, so that no
         # entry point (including the CLI `call` escape hatch) can bypass it.
-        self._guard_write(url, method, confirm)
+        self._guard_write(url, method, confirm, allow_money)
         response = self._client.request(
             method, url, json=json_body, params=params, headers=self._headers(method)
         )
@@ -342,6 +360,7 @@ class DuelClient:
                         params=params,
                         confirm=confirm,
                         auto_refresh=False,
+                        _allow_money=allow_money,
                         _attempt=attempt,
                     )
                 raise CloudflareChallenge(self._cloudflare_message(method, url))
@@ -361,6 +380,7 @@ class DuelClient:
                     params=params,
                     confirm=confirm,
                     auto_refresh=auto_refresh,
+                    _allow_money=allow_money,
                     _attempt=attempt + 1,
                 )
             raise RateLimited(
@@ -615,16 +635,22 @@ class DuelClient:
     # ---------------------------------------------------------------- actions
     #
     # State-changing calls. All paths below were read out of the live bundle
-    # (verified against the shipped service definitions) and are account
-    # management only - deliberately *not* wagering or money movement.
+    # (verified against the shipped service definitions). Account management
+    # calls need the write opt-in; the dice betting methods at the end of this
+    # section need the further betting opt-in plus per-call confirmation.
 
-    def _guard_write(self, path: str, method: str, confirm: bool) -> None:
+    def _guard_write(
+        self, path: str, method: str, confirm: bool, allow_money: bool = False
+    ) -> None:
         """Enforce the write policy for every outgoing call.
 
         Policy:
 
         * reads (GET/HEAD/OPTIONS) are always allowed;
-        * money-moving paths are refused outright, regardless of opt-in;
+        * money-moving paths are refused outright, regardless of opt-in -
+          except through ``allow_money``, which is private and may only be set
+          by reviewed betting methods (``place_dice_bet``). The generic
+          ``request()`` path and the CLI ``call`` escape hatch stay blocked;
         * token/session lifecycle POSTs listed in ``_READ_LIKE_POSTS`` are
           allowed, since login is already gated by :class:`CaptchaRequired`;
         * every other state-changing call needs an explicit opt-in.
@@ -632,14 +658,16 @@ class DuelClient:
         bare = path.split("?")[0].lower()
         # Reads are always allowed, including the read-only method listings
         # (e.g. GET withdraw/methods); money-moving state changes are refused
-        # below regardless of opt-in.
+        # below regardless of opt-in, unless this is the reviewed betting path.
         if method.upper() in ("GET", "HEAD", "OPTIONS"):
             return
         for verb in _MONEY_MOVING:
-            if verb in bare:
+            if verb in bare and not allow_money:
                 raise UnsupportedAction(
-                    f"'{verb}' endpoints are deliberately out of scope for this client "
-                    "(real-money site; see site_spec.json metadata.out_of_scope)."
+                    f"'{verb}' endpoints are blocked on the generic path "
+                    "(real-money site; wagering is only available via the "
+                    "reviewed place_dice_bet() method - see site_spec.json "
+                    "metadata.wagering)."
                 )
         if bare in _READ_LIKE_POSTS:
             return
@@ -698,6 +726,94 @@ class DuelClient:
         """``POST /api/v2/user/security/two-factor-setup``."""
         return self.request(
             "POST", "/api/v2/user/security/two-factor-setup", json_body={}, confirm=confirm
+        )
+
+    # ------------------------------------------------------- dice wagering
+    #
+    # REAL-MONEY betting. This is the only path in the client that can move
+    # money, and it is gated four deep: validated parameters, dry_run=True by
+    # default, DuelClient(betting_enabled=True), and per-call confirm=True,
+    # plus a client-side per-bet cap (max_stake). Automated wagering almost
+    # certainly violates the operator's terms and can lose real money fast -
+    # check the terms first, never stake more than you can afford to lose.
+
+    def dice_config(self) -> Any:
+        """``GET /api/v2/dice/config`` - dice limits and rules (read-only)."""
+        return self.request("GET", DICE_CONFIG_PATH)
+
+    def place_dice_bet(
+        self,
+        amount: str,
+        *,
+        bet_type: str,
+        currency: str,
+        target: str,
+        security_token: str = "",
+        confirm: bool = False,
+        dry_run: bool = True,
+    ) -> Any:
+        """``POST /api/v2/dice/bet`` - place one real-money dice bet.
+
+        Body (bundle-verified from the ``useDice`` chunk): ``amount`` is the
+        stake as a crypto amount string, ``bet_type`` is ``OVER`` or ``UNDER``,
+        ``currency`` is the currency code, ``security_token`` is ``""`` when
+        no extra security is required (else a token from
+        ``security_token()``, which may need a 2FA code), and ``target`` is
+        the roll target x100 as an integer string (e.g. ``"5005"`` for 50.05).
+        The response carries ``{data: {round: ...}}`` with nonce, seeds and
+        the settled result.
+
+        Gates, in order: parameters are validated before anything is sent;
+        ``dry_run=True`` (the default) validates and returns the would-be
+        payload without sending anything; a live bet additionally requires
+        ``DuelClient(betting_enabled=True)``, ``confirm=True``, and
+        ``amount <= max_stake``.
+        """
+        side = (bet_type or "").upper()
+        if side not in DICE_BET_TYPES:
+            raise ValueError(f"bet_type must be one of {DICE_BET_TYPES}, got {bet_type!r}")
+        if not currency or not str(currency).strip():
+            raise ValueError("currency must be a non-empty currency code")
+        try:
+            stake = Decimal(str(amount))
+        except InvalidOperation:
+            raise ValueError(f"amount must be a decimal stake string, got {amount!r}") from None
+        if stake <= 0:
+            raise ValueError(f"amount must be positive, got {amount!r}")
+        target_s = str(target)
+        if not target_s.isdigit() or not 200 <= int(target_s) <= 9800:
+            raise ValueError(
+                "target must be the roll target x100 as an integer string "
+                f"(200-9800), got {target!r}"
+            )
+        payload = {
+            "amount": str(amount),
+            "bet_type": side,
+            "currency": currency,
+            "security_token": security_token,
+            "target": target_s,
+        }
+        if dry_run:
+            return {
+                "dry_run": True,
+                "method": "POST",
+                "path": DICE_BET_PATH,
+                "payload": payload,
+            }
+        if not self.betting_enabled:
+            raise WriteNotAllowed(
+                "refusing to place a dice bet: real-money betting needs "
+                "DuelClient(betting_enabled=True)."
+            )
+        if not confirm:
+            raise WriteNotAllowed("refusing to place a dice bet: live bets need confirm=True.")
+        if stake > Decimal(str(self.max_stake)):
+            raise ValueError(
+                f"stake {stake} exceeds this client's max_stake {self.max_stake}; "
+                "raise max_stake explicitly if you mean it."
+            )
+        return self.request(
+            "POST", DICE_BET_PATH, json_body=payload, confirm=True, _allow_money=True
         )
 
     # ----------------------------------------------------------- session health
