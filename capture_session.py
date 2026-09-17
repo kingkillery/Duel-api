@@ -16,6 +16,11 @@ Usage
                   --user-data-dir=.private-api-automation/chrome-profile \
                   --no-first-run
 
+   Any free port works - pass it to this script with --cdp-url. If the chosen
+   port is already owned by something that is not a debuggable Chrome, the
+   attach fails with an HTTP 404 instead of a refused connection; the error
+   says so explicitly, so move to a free port rather than restarting Chrome.
+
 2. Log in to https://duel.com by hand in that window (including the captcha).
 3. Run::
 
@@ -33,6 +38,9 @@ import argparse
 import json
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 from automation_client import DEFAULT_PROFILE, SESSION_COOKIES, Session
@@ -106,6 +114,35 @@ def build_session(
     )
 
 
+def _devtools_note(cdp_url: str) -> str:
+    """Explain *why* an attach failed: nothing listening, or a non-DevTools squatter.
+
+    Playwright reports both cases with the same generic error, and the second is a
+    real trap: a process that merely owns the port answers every DevTools path with
+    404, so the attach fails even though "Chrome is running" looks true.
+    """
+    url = cdp_url.rstrip("/") + "/json/version"
+    try:
+        with urllib.request.urlopen(url, timeout=3) as resp:
+            body = resp.read(200).decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        return (
+            f"note: {cdp_url} answers HTTP but is not a DevTools endpoint "
+            f"(GET /json/version -> {exc.code}); another process owns that port"
+        )
+    except OSError as exc:
+        return f"note: nothing is serving DevTools at {cdp_url} ({exc})"
+    return f"note: {cdp_url} responded outside the attach path: {body[:120]!r}"
+
+
+def _port_of(cdp_url: str) -> int | None:
+    """Port embedded in a CDP URL, so error text names the port actually in use."""
+    try:
+        return urllib.parse.urlsplit(cdp_url).port
+    except ValueError:
+        return None
+
+
 def capture(cdp_url: str = CDP_URL, *, keep: tuple[str, ...] = SESSION_COOKIES) -> Session:
     try:
         from playwright.sync_api import sync_playwright
@@ -120,7 +157,9 @@ def capture(cdp_url: str = CDP_URL, *, keep: tuple[str, ...] = SESSION_COOKIES) 
         except Exception as exc:  # pragma: no cover - environment dependent
             raise SystemExit(
                 f"could not attach to Chrome at {cdp_url}: {exc}\n"
-                "Is Chrome running with --remote-debugging-port=9222?"
+                f"{_devtools_note(cdp_url)}\n"
+                f"Start (or restart) Chrome with --remote-debugging-port={_port_of(cdp_url)},"
+                " then log in by hand and re-run this command."
             )
 
         contexts = browser.contexts

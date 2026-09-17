@@ -157,6 +157,9 @@ This is the methodology's *Capture* step and the reliable path.
               --no-first-run
    ```
 
+   Any free port works — pass it to the next step with `--cdp-url`. If something
+   already owns 9222, do **not** kill that process: pick a free port instead.
+
 2. Log in at <https://duel.com> **by hand** in that window, captcha included.
 3. Lift the session out:
 
@@ -164,6 +167,11 @@ This is the methodology's *Capture* step and the reliable path.
    python capture_session.py
    python automation_cli.py whoami
    ```
+
+   Use `--cdp-url http://127.0.0.1:<port>` if you launched on a port other than
+   9222. If the attach fails with an HTTP 404 rather than a refused connection,
+   a non-DevTools process owns that port — move to a free one.
+
 
 `capture_session.py` records cookies **and** the authenticated
 `localStorage["security:uuid"]` — a cookie-only capture would leave the client
