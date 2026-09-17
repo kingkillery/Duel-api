@@ -132,6 +132,78 @@ def cmd_spec_check(args: argparse.Namespace) -> int:
     return 0 if result["drifted"] is False else 1
 
 
+def cmd_betfeed(args: argparse.Namespace) -> int:
+    """Listen to the read-only /livebetfeed namespace and record raw events.
+
+    Connects the way the SPA does (uid/token handshake query params, identify
+    on connect), forwards every server event to the optional JSONL sink, and
+    prints a per-event tally. --duration or Ctrl-C ends the listen cleanly.
+    The listener never emits anything except the protocol-mandated identify.
+    """
+    try:
+        import socketio
+    except ImportError:
+        print(
+            'betfeed needs python-socketio: pip install "python-socketio[client]"',
+            file=sys.stderr,
+        )
+        return 1
+
+    from collections import Counter
+
+    from realtime.betfeed import BetFeedClient, JsonlEventSink, auth_from_client
+
+    counts: Counter = Counter()
+    sink = JsonlEventSink(args.out) if args.out else None
+
+    def on_event(event: str, data: list, observed_at: float) -> None:
+        counts[event] += 1
+        if sink is not None:
+            sink(event, data, observed_at)
+
+    def on_state(state: str) -> None:
+        if not args.quiet:
+            print(f"[betfeed] {state}", file=sys.stderr)
+
+    with _client(args) as client:
+        feed = BetFeedClient(
+            socketio.Client(reconnection=True, reconnection_delay=2.0),
+            lambda: auth_from_client(client),
+            on_event=on_event,
+            on_state=on_state,
+        )
+        # Browser-parity handshake headers: the endpoint is gated by an
+        # engine.io middleware that denies non-browser requests, so pass
+        # everything a real handshake would carry and surface the refusal
+        # honestly if it still comes.
+        headers = {
+            "Cookie": "; ".join(f"{k}={v}" for k, v in client.session.cookies.items()),
+            "x-duel-device-identifier": client.session.device_uuid,
+            "x-env-class": "main",
+        }
+        try:
+            feed.connect(headers=headers)
+            feed.wait(args.duration)
+        except Exception as exc:
+            print(
+                f"[betfeed] connect failed: {exc}\n"
+                "the BetFeed handshake is gated by the site's anti-bot middleware; "
+                "this listener does not bypass it (see realtime/betfeed.py)",
+                file=sys.stderr,
+            )
+            return 1
+        finally:
+            feed.disconnect()
+    _emit(
+        {
+            "events": sum(counts.values()),
+            "by_event": dict(counts.most_common()),
+            "recorded_to": str(args.out) if args.out else None,
+        }
+    )
+    return 0 if counts else 1
+
+
 def cmd_metadata(args: argparse.Namespace) -> int:
     with _client(args) as client:
         doc = client.metadata(refresh_session=args.new_uuid)
@@ -327,6 +399,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--json", action="store_true", help="accepted for consistency; output is always JSON")
     p.set_defaults(func=cmd_spec_check)
+    p = sub.add_parser(
+        "betfeed",
+        help="listen to the read-only live-bet feed namespace and record events",
+    )
+    p.add_argument("--duration", type=float, default=60.0, help="seconds to listen before disconnecting")
+    p.add_argument("--out", default=None, help="append raw events to this JSONL file")
+    p.set_defaults(func=cmd_betfeed)
     sub.add_parser("whoami", help="report authentication status").set_defaults(func=cmd_whoami)
     sub.add_parser(
         "session-status",

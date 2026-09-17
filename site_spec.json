@@ -401,6 +401,32 @@
       "transport": "socket.io",
       "url": "https://pvp.duel.com",
       "auth": "{uid, authorizationToken: socket_token, signature: socket_signature, uuid}",
+      "handshake_verified_in_bundle": {
+        "bundle_sha256_prefix": "518cc628",
+        "engine_path": "/s",
+        "transports": ["websocket"],
+        "query_params": {
+          "uid": "signed-in user id, or 'guest'",
+          "token": "socket_token"
+        },
+        "identify_event": "identify",
+        "identify_payload": "{uid, authorizationToken: socket_token, signature: socket_signature, uuid}",
+        "lifecycle_events": ["init", "connect", "disconnect", "server_draining", "force_reconnect"],
+        "server_draining_semantics": "server asks clients to reconnect: fetch a fresh socket_token + socket_signature, disconnect, connect again (the SPA also debounces this at 3s)",
+        "credential_refresh": "credentials are short-lived (~30s) and re-fetched before every connect: POST /api/v2/metadata/socket-token when signed in, GET /api/v2/metadata when anonymous",
+        "namespace_keys": {
+          "BetFeed": "livebetfeed",
+          "Crash": "crash",
+          "Exchange": "exchange",
+          "GameIntegration": "gameintegration",
+          "RouletteBattles": "roulettebattle",
+          "RockPaperScissors": "rockpaperscissors",
+          "PfSlots": "pfslots"
+        },
+        "betfeed_ui_tabs": ["allbets", "highrollers", "mybets"],
+        "betfeed_store_keys": ["house_game_feed_all", "house_game_feed_highrollers", "house_game_feed_mybets"],
+        "listener_implementation": "realtime/betfeed.py (read-only; the only outbound event is identify)"
+      },
       "namespaces_seen": [
         "Chat",
         "Roulette",

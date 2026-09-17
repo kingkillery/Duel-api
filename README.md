@@ -44,6 +44,7 @@ Duel-api/
 ├── capture_session.py          # lift a session out of a real browser (CDP)
 ├── captures/                   # sanitized probe output
 ├── backtest/                   # read-only strategy backtester (no HTTP client)
+├── realtime/                   # read-only socket.io BetFeed listener (no wagers)
 ├── tests/                      # offline tests (mocked transport)
 └── .private-api-automation/    # runtime state (gitignored)
     └── profiles/default/session.json
@@ -54,6 +55,7 @@ Duel-api/
 ```bash
 pip install httpx pytest
 pip install playwright      # only needed for capture_session.py
+pip install "python-socketio[client]"  # only needed for the realtime BetFeed listener
 ```
 
 ## Quick start
@@ -65,6 +67,8 @@ python automation_cli.py games --limit 5
 python automation_cli.py rates
 python automation_cli.py whoami        # are we authenticated?
 python automation_cli.py session-status # session age & staleness (makes no request)
+python automation_cli.py spec-check     # live bundle hash vs the spec (drift tripwire)
+python automation_cli.py betfeed --duration 30   # record live BetFeed events (read-only)
 ```
 
 ---
@@ -191,8 +195,27 @@ unattended login is captcha-blocked):
 | `GET /api/v2/user` · `GET /api/v2/user/settings` · `GET /api/v2/user/kyc` | profile |
 | `GET /api/v2/client-seed` | provably-fair seed |
 
-Realtime is **socket.io** at `https://pvp.duel.com`, authenticated with
-`{uid, authorizationToken: socket_token, signature: socket_signature, uuid}`.
+Realtime is **socket.io v4** at `https://roulette.duel.com` — engine path `/s`,
+websocket-only transport, namespace `/livebetfeed`. (The `pvp.duel.com` arena
+URL exists in the env but is dead config; the per-namespace resolver falls back
+to `roulette.<host>`, live-verified 2026-09-17.) Auth is two-stage and
+bundle-verified: `uid` + `token` (the short-lived `socket_token`) ride the
+handshake query string, then the client emits `identify` with
+`{uid, authorizationToken: socket_token, signature: socket_signature, uuid}`
+(`socket_signature` is issued to signed-in sessions only; guests omit it).
+`server_draining` / `force_reconnect` from the server mean "fetch fresh
+credentials and reconnect". `realtime/betfeed.py` implements a read-only
+listener for this; every detail is recorded in `site_spec.json →
+metadata.realtime`.
+
+**The handshake is bot-gated.** From a non-browser client, the site's
+engine.io middleware answers every connect with
+`{"code":3,"message":"Bad request"}` — correct credentials, cookies, Origin,
+Sec-Fetch and device headers make no difference — and websocket upgrades are
+refused even earlier. That is the same class of trust boundary as the
+Turnstile-gated login, and the project treats it the same way: surfaced
+honestly, not bypassed. `betfeed` will report the refusal cleanly; a live
+listener needs browser-grade trust (e.g. a future CDP bridge).
 
 ## Failure handling
 
@@ -203,6 +226,7 @@ exceptions rather than silent retries:
 |---|---|---|
 | 401 / 419 | `AuthRequired` | restore a captured session; re-auth needs a browser |
 | 403 + `cf-mitigated` | `CloudflareChallenge` | `__cf_bm` went stale → auto-refresh once, then re-capture |
+| 429 | `RateLimited` | bounded retries honouring numeric `Retry-After` (backoff capped at 30 s, `max_429_retries` default 2), then raises with the delay attached |
 | missing captcha token | `CaptchaRequired` | obtain a token from a real browser |
 
 Ladder steps that *are* automated: `reload_cache` (re-run metadata — now also the
@@ -280,6 +304,11 @@ python -m backtest run --schedule martingale --base 0.50 --max-rungs 3 \
 | `sessions` | traced bankroll path for a handful of sessions |
 | `rounds` | summarise a JSONL capture |
 
+`--edges-from edges.json --game crash` replaces the guessed `--edge` with the
+site's published house edge (from the rakeback document or the games
+catalogue). A game that publishes no edge is excluded from the table rather
+than silently read as 0, and `--edges-from` may not be combined with `--edge`.
+
 Each run reports EV per session with a standard error, P(profit target),
 P(stop loss), mean wagered, `implied_edge`, mean max drawdown, net percentiles,
 and mean time-to-ruin.
@@ -293,10 +322,16 @@ One round per line, so a capture can be appended to while it grows:
 ```
 
 `read_rounds` / `write_rounds` handle it, and `run --capture FILE` replays one.
-**Live capture is not implemented.** Obtaining real rounds means subscribing to
-the socket.io `BetFeed` at `pvp.duel.com`; the format and its loader are here so
-a capture plugs in when one exists. Without it, `--edge` generates rounds from
-`P(X >= m) = (1 - edge) / m`, which is exact by construction.
+**Live BetFeed capture is implemented** (`automation_cli.py betfeed`, module
+`realtime/`) and records raw namespace events as JSONL, append-as-it-grows —
+but note the handshake is bot-gated against non-browser clients (see
+*Realtime* above), so today it records nothing without browser-grade trust.
+What is *not* implemented yet is the normalization from BetFeed events into
+`rounds` rows — BetFeed carries settled bets (bet id, game, wager, multiplier,
+payout), while the backtest wants one row per game round. The loader is here
+so a converted capture plugs in when that mapping is written. Without a
+capture, `--edge` generates rounds from `P(X >= m) = (1 - edge) / m`, which is
+exact by construction.
 
 Two traps the CLI will call out:
 
