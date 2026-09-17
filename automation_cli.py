@@ -360,6 +360,22 @@ def cmd_import_session(args: argparse.Namespace) -> int:
     return 0 if user else 1
 
 
+def _non_negative(value: str) -> int:
+    """argparse type for a count or offset that cannot be negative.
+
+    ``--limit -5`` used to slice ``items[:-5]``, which silently returned a
+    *smaller, arbitrary* subset rather than rejecting the argument - and
+    ``--start`` was passed straight through to the API.
+    """
+    try:
+        parsed = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not an integer") from None
+    if parsed < 0:
+        raise argparse.ArgumentTypeError(f"must be zero or greater, got {parsed}")
+    return parsed
+
+
 def cmd_games(args: argparse.Namespace) -> int:
     """Game catalogue listing.
 
@@ -509,10 +525,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_import_session)
 
     p = sub.add_parser("games", help="game catalogue listing (public)")
-    p.add_argument("--start", type=int, default=0)
+    p.add_argument("--start", type=_non_negative, default=0)
     p.add_argument("--filter", default="popular")
     p.add_argument("--provider", default="")
-    p.add_argument("--limit", type=int, default=10)
+    p.add_argument("--limit", type=_non_negative, default=10)
     p.set_defaults(func=cmd_games)
 
     sub.add_parser("rates", help="exchange rates (public)").set_defaults(func=cmd_rates)

@@ -23,6 +23,8 @@ engine reports ``implied_edge`` so this identity is checkable on any run.
 
 from __future__ import annotations
 
+import math
+
 from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol
@@ -32,6 +34,23 @@ from .model import BacktestError, Direction
 
 class ScheduleError(BacktestError):
     """A staking schedule was configured with unusable parameters."""
+
+
+def _checked_stake(stake: float, losses: int, schedule: str) -> float:
+    """Reject an unrepresentable rung instead of crashing mid-session.
+
+    ``factor ** losses`` and ``base * fibonacci(losses)`` both raise
+    OverflowError once a ladder passes roughly 1024 rungs. That surfaced as an
+    unhandled OverflowError from deep inside a session rather than as the
+    configuration error it is - and a capped ladder could still hit it, since
+    the cap is only consulted for depths at or beyond it.
+    """
+    if not math.isfinite(stake):
+        raise ScheduleError(
+            f"{schedule} ladder at depth {losses} needs an unrepresentable stake; "
+            "cap the ladder with --max-rungs"
+        )
+    return stake
 
 
 class StakingSchedule(Protocol):
@@ -77,7 +96,11 @@ class Martingale:
     def stake(self, base: float, losses: int) -> float | None:
         if self.max_rungs is not None and losses >= self.max_rungs:
             return None
-        return base * self.factor**losses
+        try:
+            stake = base * self.factor**losses
+        except OverflowError:
+            stake = math.inf
+        return _checked_stake(stake, losses, "Martingale")
 
 
 def _fibonacci(n: int) -> int:
@@ -101,7 +124,11 @@ class Fibonacci:
     def stake(self, base: float, losses: int) -> float | None:
         if self.max_rungs is not None and losses >= self.max_rungs:
             return None
-        return base * _fibonacci(losses)
+        try:
+            stake = base * _fibonacci(losses)
+        except OverflowError:
+            stake = math.inf
+        return _checked_stake(stake, losses, "Fibonacci")
 
 
 class OnExhausted(str, Enum):
@@ -131,6 +158,11 @@ class Strategy:
             raise ScheduleError(f"base_stake must be positive, got {self.base_stake!r}")
         if not self.payout > 0:
             raise ScheduleError(f"payout must be positive, got {self.payout!r}")
+        if not self.threshold > 0:
+            # Bet already refuses this, but only once a session is running, so
+            # `--threshold 0` died as a traceback from inside the engine instead
+            # of being rejected where the strategy is built.
+            raise ScheduleError(f"threshold must be positive, got {self.threshold!r}")
         if self.profit_target is None and self.stop_loss is None and self.max_bets is None:
             raise ScheduleError(
                 "strategy has no terminal condition: set profit_target, stop_loss "

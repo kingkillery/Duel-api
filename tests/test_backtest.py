@@ -608,3 +608,66 @@ def test_backtest_package_defines_no_wager_submission() -> None:
         source = path.read_text(encoding="utf-8")
         assert "allow_writes" not in source
         assert ".request(" not in source
+
+
+def test_deep_ladder_raises_a_schedule_error_instead_of_overflowing() -> None:
+    """Regression: factor**losses raised a raw OverflowError mid-session.
+
+    A capped ladder hit it too - the cap is only consulted at or beyond the
+    depth it names, so --max-rungs 5000 did not protect an 1100-rung ladder.
+    """
+    with pytest.raises(ScheduleError):
+        Martingale(factor=2.0).stake(1.0, 1100)
+    with pytest.raises(ScheduleError):
+        Martingale(factor=2.0, max_rungs=5000).stake(1.0, 1100)
+    with pytest.raises(ScheduleError):
+        Fibonacci().stake(1.0, 2000)
+
+
+def test_shallow_ladders_are_untouched_by_the_overflow_guard() -> None:
+    assert Martingale(factor=2.0).stake(0.5, 0) == 0.5
+    assert Martingale(factor=2.0).stake(0.5, 3) == 4.0
+    assert Martingale(factor=2.0, max_rungs=3).stake(0.5, 3) is None
+    assert Fibonacci().stake(1.0, 5) == 8.0
+
+
+def test_strategy_rejects_a_non_positive_threshold() -> None:
+    """Regression: `--threshold 0` died as a traceback from inside the engine,
+    because only Bet validated it and that happens once a session is running."""
+    with pytest.raises(ScheduleError, match="threshold must be positive"):
+        Strategy(
+            market="crash",
+            base_stake=1.0,
+            threshold=0.0,
+            payout=1.0,
+            schedule=Flat(),
+            profit_target=10.0,
+        )
+
+
+def test_write_rounds_refuses_a_non_finite_outcome(tmp_path) -> None:
+    """Regression: a NaN outcome was written as bare NaN - invalid JSON that
+    every strict parser rejects."""
+    with pytest.raises(ValueError, match="not JSON-serialisable"):
+        write_rounds(
+            tmp_path / "nan.jsonl",
+            [Round(outcomes={"crash": float("nan")}, round_id="nan1")],
+        )
+
+
+def test_capture_reports_that_the_configured_edge_is_not_applied(tmp_path, capsys) -> None:
+    """Regression: --edges-from/--edge were dropped without a word whenever a
+    capture was supplied, so the report showed a number nobody asked for."""
+    from backtest import cli
+
+    capture = tmp_path / "rounds.jsonl"
+    write_rounds(
+        capture,
+        [Round(outcomes={"crash": 1.9}, round_id=f"r{i}") for i in range(5)],
+    )
+
+    cli.main(
+        ["run", "--capture", str(capture), "--edge", "0.001", "--sessions", "4", "--seed", "1"]
+    )
+
+    assert "is NOT applied" in capsys.readouterr().err

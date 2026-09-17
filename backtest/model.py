@@ -165,6 +165,14 @@ def write_rounds(path: str | Path, rounds: Iterable[Round]) -> int:
     count = 0
     with destination.open("w", encoding="utf-8", newline="\n") as handle:
         for round_ in rounds:
-            handle.write(json.dumps(round_.to_json(), sort_keys=True) + "\n")
+            try:
+                line = json.dumps(round_.to_json(), sort_keys=True, allow_nan=False)
+            except ValueError as exc:
+                # Non-strict JSON (NaN/Infinity) would write a capture that other
+                # parsers reject outright; fail loudly rather than corrupt it.
+                raise ValueError(
+                    f"round {round_.round_id!r} is not JSON-serialisable: {exc}"
+                ) from exc
+            handle.write(line + "\n")
             count += 1
     return count

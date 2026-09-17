@@ -102,6 +102,18 @@ def _resolved_edge(args: argparse.Namespace) -> float:
 
 def _source(args: argparse.Namespace) -> RecordedSource | SyntheticSource:
     if args.capture:
+        if args.edges_from is not None or args.edge != 0.0:
+            # A capture carries real recorded outcomes, so its edge is already in
+            # the data and applying another would double-count. This branch used
+            # to return before resolving the edge at all, so both flags were
+            # dropped without a word and the report showed a number the operator
+            # never asked for.
+            print(
+                "note: --capture supplies recorded outcomes, so the configured edge "
+                "is NOT applied; drop --edge/--edges-from, or drop --capture to "
+                "simulate a synthetic edge.",
+                file=sys.stderr,
+            )
         return RecordedSource.from_jsonl(args.capture, cycle=not args.no_cycle)
     edge = _resolved_edge(args)
     if not args.quiet and edge == 0.0:
