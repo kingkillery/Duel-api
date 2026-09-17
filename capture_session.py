@@ -54,13 +54,18 @@ LS_KEYS = ("security:uuid", "auth", "lastSelectedCurrency")
 
 
 def identity_from_storage(storage: dict[str, str]) -> tuple[str | None, int | None]:
-    """Pull (username, user_id) out of the captured ``auth`` blob, or (None, None).
+    """Pull (username, user_id) out of a captured ``auth`` blob, or (None, None).
 
-    The SPA keeps the signed-in user as JSON under ``localStorage["auth"]`` -
-    either at the top level or nested under a ``user`` key. Identity is
-    informative, never load-bearing, so any parse failure, wrong shape or
-    missing key yields (None, None) rather than an exception: a capture must
-    not fail because a page changed its storage layout.
+    Best-effort only, and normally empty: verified live 2026-09-17 against a
+    signed-in profile that duel.com writes no identity blob to localStorage or
+    sessionStorage on either ``duel.com`` or ``www.duel.com``, and the ``duel``
+    cookie is an opaque 40-character token rather than a readable JWT. Identity
+    therefore has to come from the API (``automation_cli.py whoami``).
+
+    Kept anyway: storage layouts differ between site versions, and a wrong guess
+    here costs nothing, whereas *claiming* an identity is the dangerous failure.
+    Any parse failure, wrong shape or missing key yields (None, None) rather than
+    an exception - a capture must not fail because a page changed its layout.
     """
     try:
         blob = json.loads(storage.get("auth") or "")
@@ -229,12 +234,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"device uuid: {session.device_uuid}")
     if session.username is not None:
         print(f"username: {session.username}")
-    else:
-        print("username: unknown")
-    if session.user_id is not None:
         print(f"user id: {session.user_id}")
     else:
-        print("user id: unknown")
+        # Not evidence of being signed out: see identity_from_storage. Only the
+        # API can answer this, and it does, from the captured `duel` cookie.
+        print("username: unknown (duel.com stores no client-side identity blob)")
+        print("user id: unknown  (resolve with: automation_cli.py whoami)")
     print(f"wrote {path}")
     if not any(k in session.cookies for k in SESSION_COOKIES[:1]):
         print("warning: no 'duel' cookie captured - you are probably not logged in yet", file=sys.stderr)
