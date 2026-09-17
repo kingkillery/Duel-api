@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 from automation_client import DEFAULT_PROFILE, SESSION_COOKIES, Session
@@ -42,6 +43,67 @@ SITE = "duel.com"
 # localStorage keys the client needs. security:uuid is the device identifier;
 # the rest are captured for completeness/debugging.
 LS_KEYS = ("security:uuid", "auth", "lastSelectedCurrency")
+
+
+def identity_from_storage(storage: dict[str, str]) -> tuple[str | None, int | None]:
+    """Pull (username, user_id) out of the captured ``auth`` blob, or (None, None).
+
+    The SPA keeps the signed-in user as JSON under ``localStorage["auth"]`` -
+    either at the top level or nested under a ``user`` key. Identity is
+    informative, never load-bearing, so any parse failure, wrong shape or
+    missing key yields (None, None) rather than an exception: a capture must
+    not fail because a page changed its storage layout.
+    """
+    try:
+        blob = json.loads(storage.get("auth") or "")
+    except ValueError:
+        return None, None
+    if not isinstance(blob, dict):
+        return None, None
+    nested = blob.get("user")
+    source = nested if isinstance(nested, dict) else blob
+    username = source.get("username")
+    user_id = source.get("user_id")
+    # Both keys must be present and well-typed; anything else is "unknown"
+    # rather than a half-identity that would look authoritative in reports.
+    if not isinstance(username, str) or not username:
+        return None, None
+    if isinstance(user_id, bool) or not isinstance(user_id, int):
+        return None, None
+    return username, user_id
+
+
+def build_session(
+    cookies: dict[str, str],
+    storage: dict[str, str],
+    *,
+    keep: tuple[str, ...] = SESSION_COOKIES,
+    observed_at: float | None = None,
+) -> Session:
+    """Assemble a Session from raw browser cookies and localStorage.
+
+    Split out from :func:`capture` so the parts that matter for replay - cookie
+    filtering, device uuid, identity, and the timestamps staleness is measured
+    against - are testable without a browser attached.
+
+    ``observed_at`` is stamped into both ``captured_at`` and ``cf_bm_at``. Note
+    this is when the session was *observed*, not when ``__cf_bm`` was issued;
+    that is unknowable from the cookie jar. So it is a lower bound on the bot
+    cookie's true age: ``age > TTL`` means definitively expired, while
+    ``age <= TTL`` means "not provably expired", not "fresh". See
+    ``Session.is_stale()``.
+    """
+    stamp = time.time() if observed_at is None else observed_at
+    username, user_id = identity_from_storage(storage)
+    return Session(
+        device_uuid=storage.get("security:uuid") or Session().device_uuid,
+        cookies={k: v for k, v in cookies.items() if k in keep or k in SESSION_COOKIES},
+        local_storage=storage,
+        username=username,
+        user_id=user_id,
+        captured_at=stamp,
+        cf_bm_at=stamp,
+    )
 
 
 def capture(cdp_url: str = CDP_URL, *, keep: tuple[str, ...] = SESSION_COOKIES) -> Session:
@@ -78,12 +140,7 @@ def capture(cdp_url: str = CDP_URL, *, keep: tuple[str, ...] = SESSION_COOKIES) 
             list(LS_KEYS),
         )
 
-    session = Session(
-        device_uuid=storage.get("security:uuid") or Session().device_uuid,
-        cookies={k: v for k, v in cookies.items() if k in keep or k in SESSION_COOKIES},
-        local_storage=storage,
-    )
-    return session
+    return build_session(cookies, storage, keep=keep)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -95,22 +152,50 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="instead of CDP, import a JSON dump {cookies, local_storage} produced elsewhere",
     )
+    parser.add_argument(
+        "--no-stamp",
+        action="store_true",
+        help=(
+            "leave captured_at/cf_bm_at unset so status reports 'age unknown' "
+            "(only meaningful with --from-json, when the file mtime is known wrong)"
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.from_json:
         raw = json.loads(Path(args.from_json).read_text(encoding="utf-8"))
         storage = raw.get("local_storage", {}) or raw.get("localStorage", {})
-        session = Session(
-            device_uuid=storage.get("security:uuid") or raw.get("device_uuid") or Session().device_uuid,
-            cookies=raw.get("cookies", {}),
-            local_storage=storage,
+        # build_session derives identity; here the file's mtime is the best
+        # capture-time proxy available - a lower bound, since copying the file
+        # refreshes mtime. That matches is_stale() semantics: past TTL is
+        # definitive, within TTL only means "not provably expired".
+        session = build_session(
+            raw.get("cookies", {}),
+            storage,
+            observed_at=None if args.no_stamp else Path(args.from_json).stat().st_mtime,
         )
+        # The one thing build_session cannot see is `raw` itself: fall back to
+        # a dumped device_uuid when the storage blob carries no security:uuid.
+        session.device_uuid = (
+            storage.get("security:uuid") or raw.get("device_uuid") or session.device_uuid
+        )
+        if args.no_stamp:
+            session.captured_at = None
+            session.cf_bm_at = None
     else:
         session = capture(args.cdp_url)
 
     path = session.save(args.out)
     print(f"captured {len(session.cookies)} cookie(s): {sorted(session.cookies)}")
     print(f"device uuid: {session.device_uuid}")
+    if session.username is not None:
+        print(f"username: {session.username}")
+    else:
+        print("username: unknown")
+    if session.user_id is not None:
+        print(f"user id: {session.user_id}")
+    else:
+        print("user id: unknown")
     print(f"wrote {path}")
     if not any(k in session.cookies for k in SESSION_COOKIES[:1]):
         print("warning: no 'duel' cookie captured - you are probably not logged in yet", file=sys.stderr)

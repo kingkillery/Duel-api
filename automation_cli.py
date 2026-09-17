@@ -6,6 +6,7 @@ Examples
     python automation_cli.py spec
     python automation_cli.py metadata
     python automation_cli.py whoami
+    python automation_cli.py session-status
     python automation_cli.py import-session captures/session.json
     python automation_cli.py games --limit 5
     python automation_cli.py call GET /api/v2/user/settings
@@ -23,6 +24,7 @@ from pathlib import Path
 
 from automation_client import (
     DEFAULT_PROFILE,
+    STALE_WARNING_SECONDS,
     AuthRequired,
     CaptchaRequired,
     CloudflareChallenge,
@@ -38,12 +40,47 @@ def _emit(value: object) -> None:
     print(json.dumps(value, indent=1, sort_keys=True, default=str))
 
 
+def _warn_if_stale(client: DuelClient, *, quiet: bool = False) -> None:
+    """Warn when the bot cookie is expired or close to it.
+
+    Fires only when the session carries a timestamp, or is provably expired. An
+    untimestamped profile is reported as age-unknown rather than as fresh, since
+    guessing would hide exactly the failure this exists to explain.
+    """
+    if quiet:
+        return
+    status = client.session_status()
+    stale = status["stale"]
+    age = status["age_minutes"]
+    if stale:
+        print(
+            f"warning: session bot cookie is {age} min old, past its "
+            f"~{status['ttl_minutes']} min TTL, so a 403 is likely. Re-capture "
+            "with capture_session.py.",
+            file=sys.stderr,
+        )
+    elif age is not None and age >= STALE_WARNING_SECONDS / 60.0:
+        print(
+            f"note: session bot cookie is {age} min old and expires at "
+            f"~{status['ttl_minutes']} min.",
+            file=sys.stderr,
+        )
+    elif stale is None and status["has_duel_cookie"]:
+        print(
+            "warning: session carries no timestamp, so its age is unknown and a "
+            "403 would not be diagnosable. Re-capture to stamp one.",
+            file=sys.stderr,
+        )
+
+
 def _client(args: argparse.Namespace) -> DuelClient:
     """Build a client, honouring the global ``--yes`` write opt-in."""
     profile = Path(args.profile)
     writes = bool(getattr(args, "yes", False))
     if profile.exists():
-        return DuelClient.from_profile(profile, allow_writes=writes)
+        client = DuelClient.from_profile(profile, allow_writes=writes)
+        _warn_if_stale(client, quiet=bool(getattr(args, "quiet", False)))
+        return client
     client = DuelClient(profile=profile, allow_writes=writes)
     # Seed the device uuid / cookie jar without authenticating.
     try:
@@ -78,6 +115,23 @@ def cmd_spec(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_spec_check(args: argparse.Namespace) -> int:
+    """Compare the live SPA bundle hash to the spec's provenance record.
+
+    Exit 0 means the bundle the spec was recovered from is still what the site
+    serves. Exit 1 means it drifted (every captured endpoint is suspect) or the
+    spec records no hash to compare against.
+    """
+    spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
+    with _client(args) as client:
+        result = client.check_spec_drift(spec)
+    _emit(result)
+    if result["drifted"] is None:
+        print(f"spec-check: {result.get('reason', 'unknown')}", file=sys.stderr)
+        return 1
+    return 0 if result["drifted"] is False else 1
+
+
 def cmd_metadata(args: argparse.Namespace) -> int:
     with _client(args) as client:
         doc = client.metadata(refresh_session=args.new_uuid)
@@ -110,6 +164,31 @@ def cmd_whoami(args: argparse.Namespace) -> int:
             return 1
         _emit({"authenticated": bool(user), "user": user})
         return 0 if user else 1
+
+
+def cmd_session_status(args: argparse.Namespace) -> int:
+    """Offline session health report. Deliberately makes no request.
+
+    Exit status: 0 when the session is usable as-is (has a ``duel`` cookie and
+    is not provably expired), 1 otherwise. A 1 is advisory - ``auto_refresh``
+    may still rescue an expired bot cookie on the first real call.
+    """
+    profile = Path(args.profile)
+    if not profile.exists():
+        _emit(
+            {
+                "profile": str(profile),
+                "exists": False,
+                "advice": "no captured session; run capture_session.py",
+            }
+        )
+        return 1
+    with DuelClient.from_profile(profile) as client:
+        status = client.session_status()
+    status["profile"] = str(profile)
+    status["exists"] = True
+    _emit(status)
+    return 0 if status["has_duel_cookie"] and status["stale"] is not True else 1
 
 
 def cmd_login(args: argparse.Namespace) -> int:
@@ -234,10 +313,25 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="opt in to state-changing calls (required by the action commands)",
     )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="suppress session-age warnings on stderr",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("spec", help="summarise site_spec.json").set_defaults(func=cmd_spec)
+    p = sub.add_parser(
+        "spec-check",
+        help="compare the live SPA bundle hash to the spec's provenance record",
+    )
+    p.add_argument("--json", action="store_true", help="accepted for consistency; output is always JSON")
+    p.set_defaults(func=cmd_spec_check)
     sub.add_parser("whoami", help="report authentication status").set_defaults(func=cmd_whoami)
+    sub.add_parser(
+        "session-status",
+        help="report session age and staleness offline (makes no request)",
+    ).set_defaults(func=cmd_session_status)
 
     p = sub.add_parser("metadata", help="bootstrap/session document (public)")
     p.add_argument("--new-uuid", action="store_true", help="mint a fresh device uuid first")

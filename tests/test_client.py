@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+import re
 import tempfile
+import time
+from pathlib import Path
 
 import httpx
 import pytest
@@ -13,8 +15,11 @@ from automation_client import (
     AuthRequired,
     CaptchaRequired,
     CloudflareChallenge,
+    CF_BM_TTL_SECONDS,
+    DEFAULT_RETRY_AFTER_CEILING,
     DuelClient,
     DuelError,
+    RateLimited,
     Session,
     UnsupportedAction,
     WriteNotAllowed,
@@ -29,7 +34,12 @@ SAMPLE_METADATA = {
 }
 
 
-def make_client(handler, session: Session | None = None, tmp_path: Path | None = None) -> DuelClient:
+def make_client(
+    handler,
+    session: Session | None = None,
+    tmp_path: Path | None = None,
+    **kwargs,
+) -> DuelClient:
     # Never default to the repo root: login() persists a session file, and a
     # stray session.json in the working tree would leak real credentials.
     base = Path(tmp_path) if tmp_path is not None else Path(tempfile.mkdtemp())
@@ -37,6 +47,7 @@ def make_client(handler, session: Session | None = None, tmp_path: Path | None =
         session,
         profile=base / "session.json",
         transport=httpx.MockTransport(handler),
+        **kwargs,
     )
 
 
@@ -403,3 +414,441 @@ def test_xsrf_cookie_is_mirrored_into_header_only_on_writes() -> None:
         client.update_settings({"volume": 0})  # PATCH -> header
 
     assert seen == [("GET", None), ("PATCH", "tok123")]
+
+
+# ----------------------------------------------------------------- session age
+
+
+def test_staleness_is_tri_state_and_never_guesses_fresh() -> None:
+    """An untimestamped profile reports unknown, not fresh.
+
+    Every profile captured before timestamps were stamped has neither field.
+    Reading that as "fresh" would hide exactly the 403 this exists to explain.
+    """
+    assert Session().is_stale() is None
+    assert Session().bot_cookie_age_seconds() is None
+
+    now = 1_000_000.0
+    fresh = Session(captured_at=now, cf_bm_at=now)
+    assert fresh.is_stale(now=now + 60) is False
+    assert fresh.bot_cookie_age_seconds(now=now + 60) == pytest.approx(60.0)
+
+    old = Session(captured_at=now, cf_bm_at=now)
+    assert old.is_stale(now=now + CF_BM_TTL_SECONDS + 1) is True
+
+
+def test_bot_cookie_clock_prefers_cf_bm_over_captured_at() -> None:
+    """A refreshed bot cookie makes an old capture usable again."""
+    now = 1_000_000.0
+    session = Session(captured_at=now, cf_bm_at=now + 3600)
+    # 10 min after the refresh: captured_at would say 70 min, cf_bm_at says 10.
+    assert session.bot_cookie_age_seconds(now=now + 4200) == pytest.approx(600.0)
+    assert session.is_stale(now=now + 4200) is False
+    assert session.age_seconds(now=now + 4200) == pytest.approx(4200.0)
+
+
+def test_captured_at_alone_is_enough_to_date_a_legacy_profile() -> None:
+    """Pre-cf_bm_at profiles fall back to capture time rather than reporting unknown."""
+    now = 1_000_000.0
+    legacy = Session(captured_at=now, cf_bm_at=None)
+    assert legacy.bot_cookie_age_seconds(now=now + 100) == pytest.approx(100.0)
+    assert legacy.is_stale(now=now + 100) is False
+
+
+def test_session_timestamps_survive_a_json_round_trip() -> None:
+    session = Session(
+        cookies={"duel": "s", "__cf_bm": "bm"}, captured_at=123.5, cf_bm_at=456.5
+    )
+    restored = Session.from_json(session.to_json())
+    assert restored.captured_at == 123.5
+    assert restored.cf_bm_at == 456.5
+    assert restored.is_stale(now=456.5 + 60) is False
+
+
+def test_rotated_bot_cookie_restarts_the_ttl_clock() -> None:
+    """A server-issued __cf_bm must stamp cf_bm_at, or staleness never resets."""
+    before = time.time()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json=SAMPLE_METADATA, headers={"set-cookie": "__cf_bm=fresh; Path=/"}
+        )
+
+    with make_client(handler) as client:
+        assert client.session.cf_bm_at is None
+        client.metadata()
+        assert client.session.cookies["__cf_bm"] == "fresh"
+        assert client.session.cf_bm_at is not None
+        assert client.session.cf_bm_at >= before
+        assert client.session.is_stale() is False
+
+
+def test_unchanged_bot_cookie_does_not_restart_the_clock() -> None:
+    """Only a *rotation* refreshes the TTL, not every response that echoes it."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=SAMPLE_METADATA)
+
+    session = Session(cookies={"__cf_bm": "same"}, captured_at=100.0)
+    with make_client(handler, session) as client:
+        client.metadata()
+        assert client.session.cookies["__cf_bm"] == "same"
+        assert client.session.cf_bm_at is None
+        assert client.session.bot_cookie_age_seconds(now=100.0 + CF_BM_TTL_SECONDS + 5) is not None
+        assert client.session.is_stale(now=100.0 + CF_BM_TTL_SECONDS + 5) is True
+
+
+# ---------------------------------------------------------------- auto-refresh
+
+
+def _challenge() -> httpx.Response:
+    return httpx.Response(
+        403, json={"message": "Just a moment..."}, headers={"cf-mitigated": "challenge"}
+    )
+
+
+def test_auto_refresh_recovers_a_stale_bot_cookie_and_retries_once() -> None:
+    """The recovery ladder's reload_cache step, automated: 403 -> metadata -> retry."""
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.url.path.endswith("/metadata") and len(calls) == 2:
+            return httpx.Response(
+                200, json=SAMPLE_METADATA, headers={"set-cookie": "__cf_bm=rotated; Path=/"}
+            )
+        if len(calls) == 1:
+            return _challenge()
+        return httpx.Response(200, json={"id": 7})
+
+    with make_client(handler) as client:
+        assert client.profile() == {"id": 7}
+
+    assert calls == [
+        "/api/v2/user",        # original request, challenged
+        "/api/v2/metadata",    # refresh: re-mint __cf_bm
+        "/api/v2/user",        # retry, now succeeds
+    ]
+
+
+def test_auto_refresh_retries_exactly_once_and_never_loops() -> None:
+    """A persistent challenge must terminate, not recurse."""
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return _challenge()
+
+    with make_client(handler) as client:
+        with pytest.raises(CloudflareChallenge):
+            client.profile()
+
+    assert len(calls) == 2, f"expected one retry, got {calls}"
+
+
+def test_a_challenge_during_refresh_does_not_recurse() -> None:
+    """metadata() is itself a request; its own 403 must not start another refresh.
+
+    Bounded at exactly two calls: the original plus one refresh attempt. Without
+    the ``_refreshing`` re-entrancy guard this recurses until the stack blows,
+    since every refresh is itself a request that can be challenged.
+    """
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return _challenge()
+
+    with make_client(handler) as client:
+        with pytest.raises(CloudflareChallenge):
+            client.metadata()
+    assert calls == ["/api/v2/metadata"] * 2, "one refresh attempt, never recursed"
+
+
+def test_auto_refresh_can_be_disabled_per_client_and_per_call() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return _challenge()
+
+    calls: list[str] = []
+    with make_client(handler, auto_refresh=False) as client:
+        with pytest.raises(CloudflareChallenge):
+            client.profile()
+    assert calls == ["/api/v2/user"]
+
+    calls.clear()
+    with make_client(handler) as client:
+        with pytest.raises(CloudflareChallenge):
+            client.request("GET", "/api/v2/user/profile", auto_refresh=False)
+    assert calls == ["/api/v2/user/profile"]
+
+
+def test_cloudflare_error_reports_how_old_the_session_actually_is() -> None:
+    """The 403 message should be self-diagnosing rather than generic."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _challenge()
+
+    session = Session(captured_at=time.time() - 90 * 60, cf_bm_at=time.time() - 90 * 60)
+    with make_client(handler, session, auto_refresh=False) as client:
+        with pytest.raises(CloudflareChallenge) as exc:
+            client.profile()
+    message = str(exc.value)
+    assert "past" in message and "~30 min TTL" in message
+    # Format is "<n>.n min old"; assert the number is present and sane rather
+    # than matching a literal that drifts with the clock.
+    reported = re.search(r"(\d+\.\d) min old", message)
+    assert reported, f"age missing from: {message}"
+    assert 89.0 <= float(reported.group(1)) <= 91.0
+
+
+def test_cloudflare_error_says_age_unknown_rather_than_guessing() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _challenge()
+
+    with make_client(handler, Session(), auto_refresh=False) as client:
+        with pytest.raises(CloudflareChallenge) as exc:
+            client.profile()
+    assert "no timestamp" in str(exc.value)
+
+
+# -------------------------------------------------------------- rate limiting
+
+
+def test_429_honours_retry_after_and_stays_bounded(tmp_path: Path) -> None:
+    """Retry-After is obeyed; the request count is asserted exactly, not assumed."""
+    responses = iter(
+        [
+            httpx.Response(429, json={"message": "slow down"}, headers={"Retry-After": "0"}),
+            httpx.Response(429, json={"message": "slow down"}, headers={"Retry-After": "0"}),
+            httpx.Response(200, json={"ok": True}),
+        ]
+    )
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        return next(responses)
+
+    sleeps: list[float] = []
+    client = make_client(handler, tmp_path=tmp_path, sleep=sleeps.append)
+    assert client.request("GET", "/api/v2/user/profile") == {"ok": True}
+    assert len(seen) == 3, f"expected exactly 3 requests, got {len(seen)}"
+    assert sleeps == [0.0, 0.0]
+
+
+def test_persistent_429_raises_rate_limited_with_the_delay_capped(tmp_path: Path) -> None:
+    """Above the ceiling the client backs off capped, then raises with the reason."""
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return httpx.Response(429, json={"message": "no"}, headers={"Retry-After": "99"})
+
+    sleeps: list[float] = []
+    client = make_client(handler, tmp_path=tmp_path, sleep=sleeps.append)
+    with pytest.raises(RateLimited) as excinfo:
+        client.request("GET", "/api/v2/user/profile")
+    assert len(calls) == 3, f"expected exactly 3 requests, got {len(calls)}"
+    assert sleeps == [DEFAULT_RETRY_AFTER_CEILING] * 2
+    assert excinfo.value.retry_after == 99.0
+
+
+# -------------------------------------------------------------- session status
+
+
+def test_session_status_makes_no_request() -> None:
+    """Offline by design: a status check must not consume bot-cookie TTL."""
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return httpx.Response(200, json=SAMPLE_METADATA)
+
+    session = Session(
+        cookies={"duel": "s", "__cf_bm": "bm"},
+        username="alice",
+        user_id=42,
+        captured_at=time.time(),
+        cf_bm_at=time.time(),
+    )
+    with make_client(handler, session) as client:
+        status = client.session_status()
+
+    assert calls == []
+    assert status["has_duel_cookie"] is True
+    assert status["has_bot_cookie"] is True
+    assert status["stale"] is False
+    assert status["username"] == "alice"
+    assert status["user_id"] == 42
+    assert status["ttl_minutes"] == pytest.approx(30.0)
+    assert status["age_minutes"] is not None
+    assert set(status["cookies_present"]) == {"duel", "__cf_bm"}
+
+
+def test_session_status_flags_an_expired_session() -> None:
+    old = time.time() - CF_BM_TTL_SECONDS - 60
+    session = Session(cookies={"duel": "s"}, captured_at=old, cf_bm_at=old)
+    with make_client(lambda r: httpx.Response(200, json={}), session) as client:
+        status = client.session_status()
+    assert status["stale"] is True
+    assert "TTL" in status["advice"]
+
+
+def test_session_status_explains_a_missing_duel_cookie() -> None:
+    """No duel cookie means unauthenticated, and login() cannot fix it headless."""
+    session = Session(cookies={"__cf_bm": "bm"}, captured_at=time.time())
+    with make_client(lambda r: httpx.Response(200, json={}), session) as client:
+        status = client.session_status()
+    assert status["has_duel_cookie"] is False
+    assert "capture_session.py" in status["advice"]
+    assert "Turnstile" in status["advice"]
+
+
+def test_session_status_reports_unknown_age_for_legacy_profiles() -> None:
+    session = Session(cookies={"duel": "s"})
+    with make_client(lambda r: httpx.Response(200, json={}), session) as client:
+        status = client.session_status()
+    assert status["stale"] is None
+    assert status["age_minutes"] is None
+    assert "unknown" in status["advice"]
+
+
+# ------------------------------------------------------ two-factor-setup guard
+
+
+def test_two_factor_setup_passes_the_guard_and_forwards_confirm() -> None:
+    """Regression: this once called ``_guard_write(url, confirm)`` positionally.
+
+    ``confirm`` landed in the ``method`` parameter, so the call raised TypeError
+    before any request, and the opt-in was never actually consulted.
+    """
+    calls: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        return httpx.Response(200, json={"ok": True})
+
+    with make_client(handler) as client:
+        with pytest.raises(WriteNotAllowed):
+            client.two_factor_setup()
+    assert calls == [], "the guard must reject before any request goes out"
+
+    with make_client(handler) as client:
+        assert client.two_factor_setup(confirm=True) == {"ok": True}
+    assert calls == [("POST", "/api/v2/user/security/two-factor-setup")]
+
+
+# ------------------------------------------------------- multi-domain cookies
+
+
+def _multi_domain_handler(value: str = "rotated", domain: str = ".duel.com"):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=SAMPLE_METADATA,
+            headers={"set-cookie": f"{value}; Path=/; Domain={domain}"},
+        )
+
+    return handler
+
+
+def test_multi_domain_bot_cookie_does_not_raise_cookie_conflict() -> None:
+    """Regression: ``__cf_bm`` under two domains killed *every* request.
+
+    ``Cookies.get(name)`` raises ``httpx.CookieConflict`` when a name exists
+    under more than one domain. ``__init__`` restores persisted cookies under
+    ``duel.com`` while Cloudflare re-issues ``__cf_bm`` under ``.duel.com``, so
+    ``_absorb_cookies`` exploded on all calls once that happened - not an edge
+    case, but the steady state of any session that survived one response.
+    """
+    handler = _multi_domain_handler("__cf_bm=rotated")
+    session = Session(
+        cookies={"duel": "s", "__cf_bm": "persisted"}, captured_at=1000.0
+    )
+    with make_client(handler, session) as client:
+        client.metadata()  # populates the jar with the .duel.com copy
+        names = [c.name for c in client._client.cookies.jar]
+        assert names.count("__cf_bm") == 2, f"expected both domains, got {names}"
+
+        # The call that used to raise CookieConflict from _absorb_cookies.
+        client.metadata()
+        assert client.session.cookies["__cf_bm"] == "rotated"
+
+
+def test_response_set_cookie_beats_the_stale_persisted_copy() -> None:
+    """The rotation is authoritative; picking by jar order would keep the old one.
+
+    ``duel.com`` and ``.duel.com`` normalise to the same rank, so a bare
+    specificity tie-break leaves the winner dependent on insertion order.
+    Reading the response's own ``Set-Cookie`` first removes the ambiguity.
+    """
+    handler = _multi_domain_handler("__cf_bm=fresh-rotation")
+    session = Session(cookies={"__cf_bm": "stale-on-disk"}, captured_at=1000.0)
+    with make_client(handler, session) as client:
+        before = client.session.cf_bm_at
+        client.metadata()
+        assert client.session.cookies["__cf_bm"] == "fresh-rotation"
+        assert client.session.cf_bm_at is not None
+        assert client.session.cf_bm_at != before
+
+
+def test_cookie_value_prefers_the_longest_path() -> None:
+    """RFC 6265 sending precedence: the longer path is sent first."""
+    with make_client(lambda r: httpx.Response(200, json={})) as client:
+        cookies = client._client.cookies
+        cookies.set("probe", "broad", domain=".duel.com", path="/")
+        cookies.set("probe", "narrow", domain=".duel.com", path="/api/v2")
+        assert client._cookie_value("probe") == "narrow"
+        assert client._cookie_value("absent") is None
+
+
+def test_cookie_value_breaks_a_path_tie_host_only_first() -> None:
+    """Same path, two domains: resolved deterministically, not by jar order.
+
+    This is the exact shape of the production conflict - a persisted cookie
+    restored under ``duel.com`` beside a server-issued one under ``.duel.com``.
+    """
+    with make_client(lambda r: httpx.Response(200, json={})) as client:
+        cookies = client._client.cookies
+        cookies.set("probe", "domain-cookie", domain=".duel.com", path="/")
+        cookies.set("probe", "host-cookie", domain="duel.com", path="/")
+        assert client._cookie_value("probe") == "host-cookie"
+
+
+def test_cookie_value_ignores_other_hosts_entirely() -> None:
+    """A same-named cookie on an unrelated host must never be picked up."""
+    with make_client(lambda r: httpx.Response(200, json={})) as client:
+        client._client.cookies.set("probe", "wrong-host", domain="example.com", path="/")
+        assert client._cookie_value("probe") is None
+
+
+def test_multi_domain_xsrf_cookie_does_not_break_a_write() -> None:
+    """The same latent conflict existed on the XSRF header lookup."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("X-XSRF-TOKEN"))
+        return httpx.Response(200, json={"ok": True})
+
+    seen: list[str | None] = []
+    session = Session(cookies={"XSRF-TOKEN": "persisted-token"}, captured_at=1000.0)
+    with make_client(handler, session, allow_writes=True) as client:
+        client._client.cookies.set(
+            "XSRF-TOKEN", "server-token", domain=".duel.com", path="/"
+        )
+        names = [c.name for c in client._client.cookies.jar]
+        assert names.count("XSRF-TOKEN") == 2
+
+        client.update_settings({"volume": 0}, confirm=True)
+
+    assert seen == ["persisted-token"], "host-only cookie wins the tie-break"
+
+
+def test_cookie_cleared_by_the_server_is_not_resurrected() -> None:
+    """A name the response omits and the jar no longer holds must be dropped."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json=SAMPLE_METADATA, headers={"set-cookie": "__cf_bm=; Max-Age=0; Path=/"}
+        )
+
+    session = Session(cookies={"duel": "s", "__cf_bm": "old"}, captured_at=1000.0)
+    with make_client(handler, session) as client:
+        client.metadata()
+        assert "__cf_bm" not in client.session.cookies

@@ -43,6 +43,7 @@ Duel-api/
 ├── automation_cli.py           # command-line front end
 ├── capture_session.py          # lift a session out of a real browser (CDP)
 ├── captures/                   # sanitized probe output
+├── backtest/                   # read-only strategy backtester (no HTTP client)
 ├── tests/                      # offline tests (mocked transport)
 └── .private-api-automation/    # runtime state (gitignored)
     └── profiles/default/session.json
@@ -63,6 +64,7 @@ python automation_cli.py metadata      # public bootstrap; creates the session c
 python automation_cli.py games --limit 5
 python automation_cli.py rates
 python automation_cli.py whoami        # are we authenticated?
+python automation_cli.py session-status # session age & staleness (makes no request)
 ```
 
 ---
@@ -78,8 +80,35 @@ Three things must be true for any API call to work:
 | **`x-env-class: main`** | Environment selector for the production site. |
 
 Session state lives in **cookies** (`duel`, plus Cloudflare's `__cf_bm`), not a
-bearer token. `__cf_bm` has a ~30 minute TTL — a **403 means "re-capture the
-session"**, not "the path is wrong".
+bearer token. `__cf_bm` has a ~30 minute TTL, so it — not the login — is what
+actually bounds how long a replayed session stays usable. A **403 with
+`cf-mitigated` means the bot cookie went stale**, not that the path is wrong.
+
+### Session lifetime
+
+Capture stamps `captured_at` and `cf_bm_at` into the profile, which is what makes
+session age knowable at all:
+
+| Behaviour | Detail |
+|---|---|
+| `session-status` | offline health report — age, staleness, cookies present, next step. Makes **no request**. Exit 0 = usable, 1 = needs attention. |
+| `Session.is_stale()` | tri-state: `True` past TTL, `False` inside it, `None` when the profile carries no timestamp. `None` is reported as "age unknown", never guessed as fresh. |
+| auto-refresh | on a Cloudflare challenge the client runs the ladder's `reload_cache` step — one `metadata()` call to re-mint `__cf_bm` — then retries the original request once. Off with `auto_refresh=False`. |
+| warnings | every CLI command warns on stderr once the session is past TTL, or within 20% of it (`STALE_WARNING_SECONDS`). Suppress with `--quiet`. |
+
+Two caveats worth stating plainly:
+
+- The stamp records when the session was **observed**, not when `__cf_bm` was
+  issued; that is unknowable from a cookie jar. So `age > TTL` means definitively
+  expired, while `age <= TTL` means "not provably expired", not "fresh".
+- Only an actual **rotation** restarts the clock — not every response that echoes
+  the cookie. This is what lets a session that looked expired be rescued without
+  a browser, and equally why a static cookie never looks artificially fresh.
+
+Auto-refresh is bounded. The retry passes `auto_refresh=False`, and a
+`_refreshing` re-entrancy guard stops `metadata()`'s own 403 from starting
+another refresh, since every refresh is itself a request that can be challenged.
+A persistent challenge costs exactly two requests and then raises.
 
 ### The captcha gate
 
@@ -173,11 +202,20 @@ exceptions rather than silent retries:
 | Signal | Exception | Response |
 |---|---|---|
 | 401 / 419 | `AuthRequired` | restore a captured session; re-auth needs a browser |
-| 403 + `cf-mitigated` | `CloudflareChallenge` | `__cf_bm` went stale → re-capture |
+| 403 + `cf-mitigated` | `CloudflareChallenge` | `__cf_bm` went stale → auto-refresh once, then re-capture |
 | missing captcha token | `CaptchaRequired` | obtain a token from a real browser |
 
-Ladder steps that *are* automated: `reload_cache` (re-run metadata) and
-`refresh_tokens` (`metadata/socket-token`). `headless_reauth` is disabled.
+Ladder steps that *are* automated: `reload_cache` (re-run metadata — now also the
+automatic response to a Cloudflare challenge) and `refresh_tokens`
+(`metadata/socket-token`). `headless_reauth` is disabled, because
+`captcha_on_login` makes unattended re-auth impossible.
+
+The ladder's last step is `fail`: surface `AuthRequired` / `CloudflareChallenge`
+to the caller rather than retrying into an anti-bot flag. Auto-refresh honours
+that — it *is* `reload_cache`, executed once, and the fallthrough is still
+`fail`. A persistent challenge costs exactly two requests (the original plus one
+refresh) and then raises; `test_auto_refresh_retries_exactly_once_and_never_loops`
+pins the bound.
 
 ## Actions (opt-in)
 
@@ -220,6 +258,73 @@ so the mirroring is normally a no-op — but it is implemented, because replayin
 the exact client behaviour is what keeps writes working if it ever does. Cookie
 lookups are **name-only** to mirror `document.cookie`; an exact
 `domain="duel.com"` match would miss a cookie issued as `Domain=.duel.com`.
+---
+
+## Strategy backtesting (read-only)
+
+`backtest/` evaluates staking strategies against **round histories**. It holds no
+HTTP client and has no write path — rounds come from a JSONL capture or a
+generator — so it cannot place a bet even by accident. That is structural, not
+convention: `tests/test_backtest.py` walks the package AST and fails if anything
+in it imports `httpx`, `requests`, `urllib`, `socket` or `automation_client`.
+
+```bash
+python -m backtest run --schedule martingale --base 0.50 --max-rungs 3 \
+    --threshold 2.0 --payout 2.0 --profit-target 5.00 --stop-loss 4.00 \
+    --edge 0.0 --sessions 50000
+```
+
+| Command | Purpose |
+|---|---|
+| `run` | aggregate statistics over many sessions |
+| `sessions` | traced bankroll path for a handful of sessions |
+| `rounds` | summarise a JSONL capture |
+
+Each run reports EV per session with a standard error, P(profit target),
+P(stop loss), mean wagered, `implied_edge`, mean max drawdown, net percentiles,
+and mean time-to-ruin.
+
+### Round capture format
+
+One round per line, so a capture can be appended to while it grows:
+
+```json
+{"round_id": "b7f1", "timestamp": 1758000000.0, "outcomes": {"crash": 1.94}}
+```
+
+`read_rounds` / `write_rounds` handle it, and `run --capture FILE` replays one.
+**Live capture is not implemented.** Obtaining real rounds means subscribing to
+the socket.io `BetFeed` at `pvp.duel.com`; the format and its loader are here so
+a capture plugs in when one exists. Without it, `--edge` generates rounds from
+`P(X >= m) = (1 - edge) / m`, which is exact by construction.
+
+Two traps the CLI will call out:
+
+- `RecordedSource(cycle=True)` wraps a short capture, so every session replays
+  the same outcomes and they are *not* independent. `run` warns when the capture
+  is shorter than the session count — a 5-round capture can otherwise report a
+  100% win rate.
+- `--edge 0.0` is the default and assumes a perfectly fair game. It reports EV
+  0.0000, which no staking strategy can beat.
+
+### What the numbers say
+
+At zero edge the 3-rung ladder above returns **EV 0.0000**, exactly. Ruin is
+**0.5314** — not the ~0.49 that a cycle-atomic model gives (barriers checked once
+per completed ladder). The engine settles stop-loss after *every bet*, which is
+what a live loop does; `tests/test_backtest.py` pins both figures, the second
+with an independent linear solve of the absorbing chain.
+
+`stop_loss=4.00` means "quit once net <= -4.00", evaluated after a bet settles.
+Because rungs are lumpy, a 2.00 rung lost while sitting at -3.50 lands at
+**-5.50**: the realized loss can exceed the stated cap.
+
+More generally, bet sizing cannot move the sign of the expectation.
+`E[net] = -edge * E[wagered]` holds for every schedule ever devised, and the
+engine recovers it as `implied_edge`. A martingale raises `E[wagered]`, which is
+why it loses *faster* than flat betting at the same base stake.
+
+---
 
 ## Tests
 

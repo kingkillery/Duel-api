@@ -21,12 +21,14 @@ Design notes
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import time
 import uuid as _uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
@@ -44,10 +46,27 @@ USER_AGENT = (
 # ~30 minute TTL, so it is stored but expected to go stale between runs.
 SESSION_COOKIES = ("duel", "__cf_bm", "CookieConsent", "_sp_id", "_sp_ses", "XSRF-TOKEN")
 
+# The bot cookie whose TTL actually governs how long a replayed session lives.
+CF_BM_COOKIE = "__cf_bm"
+
 # XSRF pair configured by the bundle's axios defaults (kO). The cookie is
 # mirrored into the header on non-GET requests, matching axios.
 XSRF_COOKIE = "XSRF-TOKEN"
 XSRF_HEADER = "X-XSRF-TOKEN"
+
+# Cloudflare bot-management cookie lifetime, per site_spec.json token_sources:
+# "__cf_bm ... ~30 minute TTL. A 403 on replay almost always means this went
+# stale, not that the path is wrong."
+CF_BM_TTL_SECONDS = 30 * 60
+
+# Warn before the TTL expires rather than after a surprise 403.
+STALE_WARNING_SECONDS = int(CF_BM_TTL_SECONDS * 0.8)
+
+# HTTP 429 handling: how many times to retry before giving up, and the largest
+# Retry-After delay we are willing to honour (longer waits fall back to capped
+# exponential backoff) so a hostile or confused server cannot park us for minutes.
+DEFAULT_MAX_429_RETRIES = 2
+DEFAULT_RETRY_AFTER_CEILING = 30.0
 
 
 class DuelError(RuntimeError):
@@ -78,6 +97,14 @@ class UnsupportedAction(DuelError):
     """Requested action is outside this client's deliberate scope."""
 
 
+class RateLimited(DuelError):
+    """The server asked us to slow down (HTTP 429)."""
+
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
 _MONEY_MOVING = ("bet", "wager", "stake", "deposit", "withdraw", "buy", "sell")
 
 # POSTs that are token/session lifecycle rather than account mutation, so they
@@ -101,6 +128,9 @@ class Session:
     username: str | None = None
     user_id: int | None = None
     captured_at: float | None = None
+    # When __cf_bm was last issued - by capture, or by any response that rotated
+    # it.  This, not captured_at, is what staleness is measured against.
+    cf_bm_at: float | None = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=1, sort_keys=True)
@@ -121,6 +151,39 @@ class Session:
     def load(cls, path: Path | str = DEFAULT_PROFILE) -> "Session":
         return cls.from_json(Path(path).read_text(encoding="utf-8"))
 
+    def age_seconds(self, now: float | None = None) -> float | None:
+        """Seconds since capture, or ``None`` when the capture time is unknown."""
+        if self.captured_at is None:
+            return None
+        reference = time.time() if now is None else now
+        return max(0.0, reference - self.captured_at)
+
+    def bot_cookie_age_seconds(self, now: float | None = None) -> float | None:
+        """Age of ``__cf_bm``, falling back to capture time when never stamped.
+
+        A successful ``metadata()`` re-issues the bot cookie and restarts this
+        clock, which is what lets a session that looked stale minutes ago be
+        rescued without a browser.
+        """
+        stamp = self.cf_bm_at if self.cf_bm_at is not None else self.captured_at
+        if stamp is None:
+            return None
+        reference = time.time() if now is None else now
+        return max(0.0, reference - stamp)
+
+    def is_stale(
+        self, *, ttl: float = CF_BM_TTL_SECONDS, now: float | None = None
+    ) -> bool | None:
+        """Tri-state staleness: ``True`` past TTL, ``False`` inside it, ``None`` unknown.
+
+        ``None`` means neither timestamp is present, which is the state of every
+        profile captured before this was stamped. Callers must not read ``None``
+        as "fresh": an untimestamped session can be arbitrarily old, and guessing
+        would hide exactly the failure this exists to explain.
+        """
+        age = self.bot_cookie_age_seconds(now)
+        return None if age is None else age > ttl
+
 
 class DuelClient:
     """Thin, read-oriented client for the Duel.com private API."""
@@ -133,9 +196,18 @@ class DuelClient:
         timeout: float = 30.0,
         transport: httpx.BaseTransport | None = None,
         allow_writes: bool = False,
+        auto_refresh: bool = True,
+        max_429_retries: int = DEFAULT_MAX_429_RETRIES,
+        sleep: Callable[[float], None] | None = None,
     ) -> None:
         # State-changing calls are opt-in. Read-only is the default posture.
         self.allow_writes = allow_writes
+        # Re-mint __cf_bm once on a Cloudflare challenge before failing.
+        self.auto_refresh = auto_refresh
+        self._refreshing = False
+        # 429 retries before RateLimited; the injectable sleep keeps tests off the clock.
+        self.max_429_retries = max_429_retries
+        self._sleep = sleep if sleep is not None else time.sleep
         self.profile_path = Path(profile)
         self.session = session or Session()
         self._client = httpx.Client(
@@ -169,14 +241,61 @@ class DuelClient:
         if method.upper() not in ("GET", "HEAD", "OPTIONS"):
             # Name-only lookup, mirroring axios/document.cookie: a cookie issued
             # with `Domain=.duel.com` is stored under the dotted host and an
-            # exact `domain="duel.com"` match would silently miss it.
-            token = self._client.cookies.get(XSRF_COOKIE)
+            # exact `domain="duel.com"` match would silently miss it. It also
+            # tolerates the same name appearing under several domains, which
+            # `Cookies.get` refuses to resolve (see `_cookie_value`).
+            token = self._cookie_value(XSRF_COOKIE)
             if token:
                 headers[XSRF_HEADER] = token
 
         if extra:
             headers.update(extra)
         return headers
+
+    def _cookie_value(self, name: str) -> str | None:
+        """Read a cookie by name without tripping httpx's ``CookieConflict``.
+
+        ``Cookies.get(name)`` raises when the same name is present under more
+        than one domain, and that is the normal state here rather than an edge
+        case: ``__init__`` restores persisted cookies under ``duel.com`` while
+        Cloudflare re-issues ``__cf_bm`` under ``.duel.com``. Every request then
+        died in ``_absorb_cookies`` before this was resolved.
+
+        Browsers pick the most specific applicable cookie, so do the same:
+        filter to domains that actually match our origin host, then rank by
+        specificity. A bare ``(path, domain)`` rank is not enough - ``duel.com``
+        and ``.duel.com`` normalise to the same string and would tie, leaving the
+        winner dependent on jar insertion order. Host-only cookies outrank domain
+        cookies, and a longer path outranks a shorter one.
+        """
+        host = httpx.URL(ORIGIN).host
+        best: tuple[int, bool, int, str] | None = None
+        for cookie in self._client.cookies.jar:
+            if cookie.name != name:
+                continue
+            raw_domain = cookie.domain or ""
+            domain = raw_domain.lstrip(".")
+            if domain != host and not host.endswith("." + domain):
+                continue
+            rank = (
+                len(cookie.path or "/"),
+                not raw_domain.startswith("."),
+                len(domain),
+            )
+            candidate = rank + (cookie.value,)
+            if best is None or candidate[:3] > best[:3]:
+                best = candidate
+        return None if best is None else best[3]
+
+    def _retry_after_seconds(self, response: httpx.Response) -> float | None:
+        """Parse a numeric ``Retry-After``. HTTP-dates return None (not worth a clock)."""
+        raw = response.headers.get("Retry-After")
+        if raw is None:
+            return None
+        try:
+            return max(0.0, float(raw.strip()))
+        except ValueError:
+            return None
 
     def request(
         self,
@@ -186,12 +305,20 @@ class DuelClient:
         json_body: Any | None = None,
         params: dict[str, Any] | None = None,
         confirm: bool = False,
+        auto_refresh: bool | None = None,
+        _attempt: int = 0,
     ) -> Any:
         """Perform one API call and return the decoded JSON body.
 
         Raises :class:`CloudflareChallenge` on 403 (stale bot cookie) and
         :class:`AuthRequired` on 401/419.
+
+        ``auto_refresh`` overrides the client default: on a Cloudflare challenge
+        the client makes one ``metadata()`` call to re-mint ``__cf_bm`` and
+        retries the original request once. The retry passes
+        ``auto_refresh=False``, so this can never loop.
         """
+        attempt = _attempt
         url = path if path.startswith("/") else f"{API_PREFIX}/{path}"
         # The guard lives here, not only in the named action methods, so that no
         # entry point (including the CLI `call` escape hatch) can bypass it.
@@ -207,18 +334,44 @@ class DuelClient:
             body = response.text[:200]
             mitigated = response.headers.get("cf-mitigated") is not None
             if mitigated or "<html" in body[:80].lower():
-                raise CloudflareChallenge(
-                    "Cloudflare challenged this request; the __cf_bm cookie is "
-                    "likely stale. Re-capture the session (capture_session.py)."
-                )
+                if self._refresh_bot_cookie(auto_refresh):
+                    return self.request(
+                        method,
+                        path,
+                        json_body=json_body,
+                        params=params,
+                        confirm=confirm,
+                        auto_refresh=False,
+                        _attempt=attempt,
+                    )
+                raise CloudflareChallenge(self._cloudflare_message(method, url))
             raise DuelError(f"403 from {method} {url}: {body}")
         if response.status_code in (401, 419):
             raise AuthRequired(f"session not authenticated ({response.status_code} {method} {url})")
+        if response.status_code == 429:
+            if attempt < self.max_429_retries:
+                delay = self._retry_after_seconds(response)
+                if delay is None or delay > DEFAULT_RETRY_AFTER_CEILING:
+                    delay = min(delay or 2.0 * (2**attempt), DEFAULT_RETRY_AFTER_CEILING)
+                self._sleep(delay)
+                return self.request(
+                    method,
+                    path,
+                    json_body=json_body,
+                    params=params,
+                    confirm=confirm,
+                    auto_refresh=auto_refresh,
+                    _attempt=attempt + 1,
+                )
+            raise RateLimited(
+                f"429 from {method} {url} after {attempt + 1} attempt(s): {response.text[:200]}",
+                self._retry_after_seconds(response),
+            )
         if response.status_code >= 400:
             raise DuelError(f"{response.status_code} from {method} {url}: {response.text[:300]}")
 
         # Mirror server cookie rotation back into the persisted session.
-        self._absorb_cookies()
+        self._absorb_cookies(response)
 
         if not response.content:
             return None
@@ -227,12 +380,74 @@ class DuelClient:
         except ValueError:
             return response.text
 
-    def _absorb_cookies(self) -> None:
+    def _refresh_bot_cookie(self, override: bool | None) -> bool:
+        """Try once to re-mint ``__cf_bm`` via metadata. True if it worked.
+
+        ``self._refreshing`` guards re-entrancy: metadata() is itself a request,
+        so a challenge during the refresh must not trigger another refresh.
+        """
+        enabled = self.auto_refresh if override is None else override
+        if not enabled or self._refreshing:
+            return False
+        self._refreshing = True
+        try:
+            self.metadata()
+        except DuelError:
+            return False
+        finally:
+            self._refreshing = False
+        return True
+
+    def _cloudflare_message(self, method: str, url: str) -> str:
+        """Make the 403 self-diagnosing: report how old the session actually is."""
+        age = self.session.bot_cookie_age_seconds()
+        ttl_minutes = CF_BM_TTL_SECONDS / 60.0
+        if age is None:
+            detail = (
+                "the session carries no timestamp so its age is unknown - "
+                "re-capture to make future 403s diagnosable"
+            )
+        else:
+            verdict = "past" if age > CF_BM_TTL_SECONDS else "within"
+            detail = (
+                f"the bot cookie is {age / 60.0:.1f} min old, {verdict} its "
+                f"~{ttl_minutes:.0f} min TTL"
+            )
+        return (
+            f"Cloudflare challenged {method} {url}; the __cf_bm cookie is likely "
+            f"stale. {detail}. Re-capture the session (capture_session.py)."
+        )
+
+    def _absorb_cookies(self, response: httpx.Response | None = None) -> None:
+        """Mirror server cookie rotation back into the persisted session.
+
+        ``response`` is optional: ``request()`` passes the response it just got,
+        while ``save()`` and ``login()`` only have the accumulated jar to work
+        from. When present, the response's own ``Set-Cookie`` values are
+        authoritative *and* unambiguous, so they win. The jar is consulted only
+        for names the response did not mention, and even there a name held under
+        several domains is resolved by specificity - ``Cookies.get`` raises
+        ``CookieConflict`` instead, which previously killed every request once
+        ``__cf_bm`` existed under both ``duel.com`` and ``.duel.com``.
+        """
+        previous = self.session.cookies.get(CF_BM_COOKIE)
+        issued = (
+            {c.name: c.value for c in response.cookies.jar} if response is not None else {}
+        )
         for name in SESSION_COOKIES:
-            # Name-only, for the same reason as the XSRF lookup above.
-            value = self._client.cookies.get(name)
-            if value:
+            value = issued.get(name)
+            if value is None:
+                value = self._cookie_value(name)
+            if value is not None:
                 self.session.cookies[name] = value
+            else:
+                # Server cleared the cookie (or it was never issued): do not
+                # resurrect a stale value from disk on the next save().
+                self.session.cookies.pop(name, None)
+        # A rotated bot cookie restarts the TTL clock that is_stale() reads.
+        current = self.session.cookies.get(CF_BM_COOKIE)
+        if current is not None and current != previous:
+            self.session.cf_bm_at = time.time()
 
     # -------------------------------------------------------------- bootstrap/auth
 
@@ -249,6 +464,34 @@ class DuelClient:
     def socket_token(self) -> dict[str, Any]:
         """``POST /api/v2/metadata/socket-token`` - short-lived realtime credential."""
         return self.request("POST", "/api/v2/metadata/socket-token", json_body={})
+
+    def fetch_text(self, url: str) -> str:
+        """GET an absolute URL and return the body as text (used for spec drift).
+
+        Absorbs cookie rotation like any other response. Does not use request(),
+        because bundle assets are neither same-origin ``/api/v2`` nor JSON.
+        """
+        response = self._client.request("GET", url, headers=self._headers("GET"))
+        self._absorb_cookies(response)
+        response.raise_for_status()
+        return response.text
+
+    def check_spec_drift(self, spec: dict) -> dict:
+        """Compare the live bundle hash to ``spec['metadata']['provenance']``.
+
+        The spec records the SPA bundle path and the first 8 hex digits of its
+        sha256. When the live bundle no longer matches, every endpoint captured
+        from that bundle is suspect: the SPA shipped a new build, and paths,
+        payloads or auth may have moved under it.
+        """
+        provenance = (spec.get("metadata") or {}).get("provenance") or {}
+        bundle = provenance.get("bundle") or ""
+        expected = provenance.get("bundle_sha256_prefix") or ""
+        if not bundle or not expected:
+            return {"drifted": None, "reason": "spec records no bundle hash"}
+        body = self.fetch_text(bundle if bundle.startswith("/") else f"/{bundle}")
+        actual = hashlib.sha256(body.encode("utf-8")).hexdigest()[:8]
+        return {"expected": expected, "actual": actual, "drifted": actual != expected}
 
     @property
     def is_authenticated(self) -> bool:
@@ -387,15 +630,17 @@ class DuelClient:
         * every other state-changing call needs an explicit opt-in.
         """
         bare = path.split("?")[0].lower()
+        # Reads are always allowed, including the read-only method listings
+        # (e.g. GET withdraw/methods); money-moving state changes are refused
+        # below regardless of opt-in.
+        if method.upper() in ("GET", "HEAD", "OPTIONS"):
+            return
         for verb in _MONEY_MOVING:
             if verb in bare:
                 raise UnsupportedAction(
                     f"'{verb}' endpoints are deliberately out of scope for this client "
                     "(real-money site; see site_spec.json metadata.out_of_scope)."
                 )
-
-        if method.upper() in ("GET", "HEAD", "OPTIONS"):
-            return
         if bare in _READ_LIKE_POSTS:
             return
         if not (confirm or self.allow_writes):
@@ -451,8 +696,71 @@ class DuelClient:
 
     def two_factor_setup(self, *, confirm: bool = False) -> Any:
         """``POST /api/v2/user/security/two-factor-setup``."""
-        self._guard_write("/api/v2/user/security/two-factor-setup", confirm)
-        return self.request("POST", "/api/v2/user/security/two-factor-setup", json_body={})
+        return self.request(
+            "POST", "/api/v2/user/security/two-factor-setup", json_body={}, confirm=confirm
+        )
+
+    # ----------------------------------------------------------- session health
+
+    def session_status(self) -> dict[str, Any]:
+        """Offline health summary of the loaded session. Makes no request.
+
+        ``stale`` is tri-state: ``None`` means the session carries no timestamp
+        at all, which is reported as "age unknown" rather than "fresh".
+        """
+        age = self.session.bot_cookie_age_seconds()
+        stale = self.session.is_stale()
+        cookies = self.session.cookies
+        status: dict[str, Any] = {
+            "device_uuid": self.session.device_uuid,
+            "username": self.session.username,
+            "user_id": self.session.user_id,
+            "captured_at": self.session.captured_at,
+            "cf_bm_at": self.session.cf_bm_at,
+            "age_seconds": None if age is None else round(age, 1),
+            "age_minutes": None if age is None else round(age / 60.0, 2),
+            "ttl_minutes": round(CF_BM_TTL_SECONDS / 60.0, 1),
+            "stale": stale,
+            "has_bot_cookie": CF_BM_COOKIE in cookies,
+            "has_duel_cookie": "duel" in cookies,
+            # Evidence of *identity*, not merely of a cookie. A live probe shows
+            # `duel` can be present with `user: null` - an issued-but-anonymous
+            # session - so cookie presence must not be read as authenticated.
+            "has_identity": self.session.username is not None
+            or self.session.user_id is not None,
+            "cookies_present": sorted(cookies),
+        }
+        if not status["has_duel_cookie"]:
+            status["advice"] = (
+                "no `duel` session cookie, so this session cannot authenticate. "
+                "Capture a logged-in session with capture_session.py; login() "
+                "cannot help without a Turnstile token from a real browser."
+            )
+        elif stale:
+            # A definite expiry outranks the identity note: it is actionable now,
+            # and reporting "unverified" here would hide an imminent 403.
+            status["advice"] = (
+                "bot cookie is past its TTL, so a 403 is likely. Re-capture with "
+                "capture_session.py, or call metadata() to attempt a refresh."
+            )
+        elif stale is None:
+            status["advice"] = (
+                "session carries no timestamp, so its age is unknown - treat it "
+                "as possibly expired. Re-capture to make future 403s diagnosable."
+            )
+        elif not status["has_identity"]:
+            # build_session() records cookies, device uuid and timestamps but not
+            # identity, and `auth` is not present in captured localStorage, so
+            # this fires for every captured profile. Say what is actually known
+            # rather than implying the session is anonymous.
+            status["advice"] = (
+                "profile holds a `duel` cookie within TTL, but capture does not "
+                "record identity, so authentication cannot be confirmed offline. "
+                "Run `whoami` - it is authoritative."
+            )
+        else:
+            status["advice"] = "bot cookie is within TTL"
+        return status
 
     # ---------------------------------------------------------------- persistence
 
