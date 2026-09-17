@@ -34,6 +34,8 @@ class FakeSio:
         self.connects: list[tuple[str, dict]] = []
         self.emitted: list[tuple[str, object, str]] = []
         self.disconnections = 0
+        self.wait_calls = 0
+        self.connected = True
 
     def on(self, event, handler=None, namespace=None):
         self.handlers[(namespace, event)] = handler
@@ -48,8 +50,11 @@ class FakeSio:
     def disconnect(self):
         self.disconnections += 1
 
-    def wait(self, seconds=None):
-        pass
+    def wait(self):
+        # Mirrors python-socketio 5.x exactly: Client.wait() takes NO arguments.
+        # Accepting a `seconds` keyword here is precisely what let the wrapper
+        # pass one to the real library without a single test failing.
+        self.wait_calls += 1
 
 
 def make_feed(provider=None, **kwargs):
@@ -211,12 +216,107 @@ def test_jsonl_sink_appends_valid_jsonl(tmp_path) -> None:
 
 
 def test_module_declares_itself_read_only() -> None:
-    """Structural guard: the only emit call site is the identify handler."""
+    """Structural guard: exactly one outbound emit call site exists.
+
+    Counted over the parsed AST rather than by substring. The previous version
+    asserted on text left behind by a str.replace, so its `or` fallback was
+    unreachable dead code and any emit spelled differently slipped past it.
+    """
+    import ast
     import inspect
 
     from realtime import betfeed
 
-    source = inspect.getsource(betfeed)
-    assert ".emit(" not in source.replace("self._sio.emit(", "", 1) or source.count(
-        "self._sio.emit("
-    ) == 1
+    emits = [
+        node
+        for node in ast.walk(ast.parse(inspect.getsource(betfeed)))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "emit"
+    ]
+    assert len(emits) == 1, f"expected exactly one outbound emit, found {len(emits)}"
+
+
+def test_bounded_wait_never_hands_a_timeout_to_the_real_socketio_client() -> None:
+    """Regression: python-socketio 5.x Client.wait() takes NO arguments.
+
+    The old code passed `seconds` positionally on every call - even wait(None) -
+    so it raised TypeError against the real library while the fake accepted it.
+    """
+    import socketio
+
+    feed = BetFeedClient(socketio.Client(), lambda: AUTH)
+    feed.wait(0.01)  # must not raise
+
+
+def _stepping_clock(step: float = 0.05):
+    now = [0.0]
+
+    def clock() -> float:
+        now[0] += step
+        return now[0]
+
+    return clock
+
+
+def test_bounded_wait_polls_instead_of_delegating_and_unbounded_delegates() -> None:
+    sio, feed = make_feed(clock=_stepping_clock())
+    feed.wait(0.2)
+    assert sio.wait_calls == 0  # bounded: polled here, never handed a timeout
+
+    feed.wait()
+    assert sio.wait_calls == 1  # unbounded: delegated to the library
+
+
+def test_bounded_wait_stops_early_when_the_transport_drops() -> None:
+    sio, feed = make_feed(clock=_stepping_clock())
+    sio.connected = False
+    feed.wait(60.0)  # would sleep for a minute if it ignored the transport
+    assert sio.wait_calls == 0
+
+
+def test_reconnect_keeps_the_session_headers() -> None:
+    """Regression: a server-triggered reconnect dropped the CLI's cookie jar.
+
+    connect() merged the supplied headers for that call only, so the reconnect
+    - which the server initiates - reconnected without the session at all.
+    """
+    sio, feed = make_feed()
+    feed.connect(headers={"Cookie": "duel=FAKE", "x-device-uuid": "u1"})
+
+    sio.handlers[(BETFEED_NAMESPACE, "server_draining")]()
+
+    assert len(sio.connects) == 2
+    for _url, kwargs in sio.connects:
+        assert kwargs["headers"]["Cookie"] == "duel=FAKE"
+        assert kwargs["headers"]["x-device-uuid"] == "u1"
+
+
+def test_jsonl_sink_keeps_every_line_under_concurrent_dispatch(tmp_path) -> None:
+    """Regression: unlocked append lost and interleaved recorded events."""
+    import threading
+
+    path = tmp_path / "feed.jsonl"
+    sink = JsonlEventSink(path)
+
+    def worker(n: int) -> None:
+        for i in range(200):
+            sink("house_game_feed_all", [{"writer": n, "i": i}], float(i))
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in range(5)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1000
+    for line in lines:
+        json.loads(line)  # intact JSON means no two writes interleaved
+
+
+def test_jsonl_sink_creates_a_missing_output_directory(tmp_path) -> None:
+    """Regression: a missing --out directory recorded nothing, silently."""
+    path = tmp_path / "missing" / "nested" / "feed.jsonl"
+    JsonlEventSink(path)("init", [], 1.0)
+    assert path.exists()

@@ -38,6 +38,7 @@ path that could grow one without touching this file's explicit chokepoint.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,6 +56,9 @@ SOCKET_PATH = "/s"  # engine.io path - not /socket.io (bundle fallback o || '/s'
 BETFEED_NAMESPACE = "/livebetfeed"
 IDENTIFY_EVENT = "identify"
 RECONNECT_EVENTS = ("server_draining", "force_reconnect")
+
+# Bounded listens poll rather than handing a timeout to the library: see wait().
+WAIT_POLL_SECONDS = 0.1
 
 # Server-managed events: handled specifically, never forwarded as data.
 # (python-socketio's '*' wildcard dispatches regular events only; the guard
@@ -157,6 +161,9 @@ class BetFeedClient:
         self._auth_provider = auth_provider
         self._url = url.rstrip("/")
         self._headers = {"Origin": "https://duel.com", **(headers or {})}
+        # Set by connect(); reconnects are server-triggered, so per-session
+        # headers must persist beyond the call that supplied them.
+        self._session_headers: dict[str, str] = {}
         self._namespace = namespace
         self._on_event = on_event or (lambda event, data, observed_at: None)
         self._on_state = on_state
@@ -180,7 +187,9 @@ class BetFeedClient:
         """Fetch fresh credentials and connect + identify on the namespace.
 
         ``headers`` extends the default browser-parity set (``Origin``); the
-        CLI passes the session cookie jar and device identifier here.
+        CLI passes the session cookie jar and device identifier here. They are
+        remembered for the life of this client so that a server-triggered
+        reconnect does not silently drop the session.
         """
         self._state("connecting")
         self._auth = self._auth_provider()
@@ -188,7 +197,9 @@ class BetFeedClient:
         # Note: the namespace travels in the `namespaces` argument, not the
         # URL - python-socketio, unlike the JS client, does not treat a URL
         # path as the namespace. The query carries the handshake credential.
-        merged = {**self._headers, **headers} if headers else self._headers
+        if headers:
+            self._session_headers = dict(headers)
+        merged = {**self._headers, **self._session_headers}
         self._sio.connect(
             f"{self._url}?uid={quote(self._auth.uid)}&token={quote(self._auth.token)}",
             socketio_path=SOCKET_PATH,
@@ -201,8 +212,20 @@ class BetFeedClient:
         self._sio.disconnect()
 
     def wait(self, seconds: float | None = None) -> None:
-        """Block processing events (``seconds=None``: until Ctrl-C)."""
-        self._sio.wait(seconds)
+        """Block while events are processed (``seconds=None``: until disconnect).
+
+        python-socketio 5.x's ``Client.wait()`` accepts **no** arguments, so a
+        bounded listen is a sleep loop here rather than a timeout argument. The
+        old code passed ``seconds`` positionally and raised TypeError against
+        the real library; the duck-typed test double accepted the argument, so
+        nothing caught it.
+        """
+        if seconds is None:
+            self._sio.wait()
+            return
+        deadline = self._clock() + seconds
+        while self._clock() < deadline and getattr(self._sio, "connected", True):
+            time.sleep(WAIT_POLL_SECONDS)
 
     # -- server event handlers (mirror the SPA wrapper) --------------------
 
@@ -248,8 +271,14 @@ class JsonlEventSink:
 
     def __init__(self, path: str | Path) -> None:
         self._path = Path(path)
+        # A lock plus an ensured directory: the sink is called from whichever
+        # thread the transport dispatches on, and losing events here would
+        # silently corrupt the recording rather than fail loudly.
+        self._lock = threading.Lock()
+        self._path.parent.mkdir(parents=True, exist_ok=True)
 
     def __call__(self, event: str, data: list, observed_at: float) -> None:
         record = {"observed_at": observed_at, "event": event, "data": data}
-        with self._path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, default=str) + "\n")
+        line = json.dumps(record, default=str) + "\n"
+        with self._lock, self._path.open("a", encoding="utf-8") as fh:
+            fh.write(line)

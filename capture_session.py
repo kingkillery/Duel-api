@@ -181,6 +181,22 @@ def _start_hint(cdp_url: str) -> str:
     )
 
 
+def _duel_cookies(cookies: list[dict]) -> dict[str, str]:
+    """Map cookie name -> value for duel.com only.
+
+    Suffix-matched rather than a substring test. ``SITE in domain`` accepts
+    lookalikes such as ``duel.com.evil.net`` or ``notduel.com``, and because the
+    result is keyed by name, such a cookie can overwrite the real session value
+    with an attacker-chosen one.
+    """
+    out: dict[str, str] = {}
+    for cookie in cookies:
+        domain = (cookie.get("domain") or "").lstrip(".").lower()
+        if domain == SITE or domain.endswith(f".{SITE}"):
+            out[cookie["name"]] = cookie["value"]
+    return out
+
+
 def capture(cdp_url: str = CDP_URL, *, keep: tuple[str, ...] = SESSION_COOKIES) -> Session:
     try:
         from playwright.sync_api import sync_playwright
@@ -209,7 +225,7 @@ def capture(cdp_url: str = CDP_URL, *, keep: tuple[str, ...] = SESSION_COOKIES) 
             page = ctx.new_page()
             page.goto(f"https://{SITE}/", wait_until="domcontentloaded")
 
-        cookies = {c["name"]: c["value"] for c in ctx.cookies() if SITE in (c.get("domain") or "")}
+        cookies = _duel_cookies(ctx.cookies())
         storage = page.evaluate(
             "(keys) => Object.fromEntries(keys.filter(k => localStorage.getItem(k) !== null)"
             ".map(k => [k, localStorage.getItem(k)]))",

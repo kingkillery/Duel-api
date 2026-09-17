@@ -15,6 +15,7 @@ import pytest
 import capture_session
 from capture_session import (
     _devtools_note,
+    _duel_cookies,
     _port_of,
     _start_hint,
     build_session,
@@ -143,3 +144,25 @@ def test_from_json_survives_wrong_typed_fields(tmp_path, capsys):
     captured = capsys.readouterr()
     assert code == 1  # no `duel` cookie: reported as such, not traced back
     assert "unknown" in captured.out
+
+
+def test_lookalike_domains_cannot_overwrite_the_real_session_cookies():
+    """Regression: the filter was `SITE in domain`, a substring test.
+
+    Because the result is keyed by cookie name, a lookalike domain's value could
+    overwrite the genuine one - and the capture would then carry an
+    attacker-chosen session.
+    """
+    cookies = [
+        {"name": "duel", "value": "real", "domain": "duel.com"},
+        {"name": "duel", "value": "spoofed", "domain": "duel.com.evil.net"},
+        {"name": "duel", "value": "spoofed2", "domain": "notduel.com"},
+        {"name": "cf_clearance", "value": "ok", "domain": ".duel.com"},
+        {"name": "other", "value": "x", "domain": "example.com"},
+    ]
+    assert _duel_cookies(cookies) == {"duel": "real", "cf_clearance": "ok"}
+
+
+def test_cookie_domains_on_a_duel_subdomain_are_kept():
+    cookies = [{"name": "game", "value": "v", "domain": "www.duel.com"}]
+    assert _duel_cookies(cookies) == {"game": "v"}
