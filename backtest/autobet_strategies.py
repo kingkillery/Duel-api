@@ -87,6 +87,53 @@ class DAlembertStrategy:
         return new_stake.quantize(Decimal("0.00000001"))
 
 
+class ParoliStrategy:
+    """Anti-Martingale (Paroli): press after wins, reset after losses.
+
+    Doubles the stake after each win and returns to base after any loss.
+    After ``bank_after`` consecutive wins the streak is banked: the stake
+    resets to base so a completed streak's profit is never re-exposed.
+
+    Because pressed stakes are funded by the preceding wins, a failed
+    progression at step k costs (net) only the base stake: e.g. base 1u,
+    factor 2, bank_after 3 -> stakes 1u/2u/4u; winning the first two then
+    losing the third nets +1u +2u -4u = -1u. Only the full 1-2-4 sweep
+    banks the streak (+7u at a ~2x payout).
+    """
+
+    def __init__(
+        self,
+        base_stake: Decimal,
+        factor: Decimal = Decimal(2),
+        bank_after: int = 3,
+        max_stake: Decimal | None = None,
+    ) -> None:
+        if base_stake <= 0:
+            raise ValueError("base_stake must be positive")
+        if factor <= 1:
+            raise ValueError("factor must be > 1")
+        if bank_after < 1:
+            raise ValueError("bank_after must be >= 1")
+        self._base = base_stake
+        self._factor = factor
+        self._bank_after = bank_after
+        self._max_stake = max_stake
+        self._win_streak = 0
+
+    def next_stake(self, current_stake: Decimal, won: bool) -> Decimal:
+        if not won:
+            self._win_streak = 0
+            return self._base
+        self._win_streak += 1
+        if self._win_streak >= self._bank_after:
+            self._win_streak = 0
+            return self._base
+        pressed = current_stake * self._factor
+        if self._max_stake is not None:
+            pressed = min(pressed, self._max_stake)
+        return pressed.quantize(Decimal("0.00000001"))
+
+
 class CustomStepsStrategy:
     """Follow an explicit sequence of stake multipliers."""
     
@@ -136,7 +183,18 @@ def load_strategy(config: dict) -> object:
     
     if strategy_type == "flat":
         return FlatStrategy(base_stake)
-    
+
+    elif strategy_type == "paroli":
+        factor = Decimal(str(config.get("factor", "2")))
+        bank_after = int(config.get("bank_after", 3))
+        max_stake = config.get("max_stake")
+        return ParoliStrategy(
+            base_stake,
+            factor,
+            bank_after,
+            Decimal(str(max_stake)) if max_stake is not None else None,
+        )
+
     elif strategy_type == "martingale":
         factor = Decimal(str(config.get("factor", "2")))
         return MartingaleStrategy(base_stake, factor)

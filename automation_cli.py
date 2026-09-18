@@ -340,6 +340,8 @@ def cmd_autobet(args: argparse.Namespace) -> int:
         rounds_played = 0
         out_path = Path(args.out) if args.out else Path("autobet_rounds.jsonl")
         out_path.parent.mkdir(parents=True, exist_ok=True)
+        last_won = False  # previous round's outcome, threaded to next_stake
+
 
         while True:
             # Check limits before each round
@@ -351,7 +353,7 @@ def cmd_autobet(args: argparse.Namespace) -> int:
                 break
 
             # Get stake from strategy
-            current_stake = strategy.next_stake(stake, (total_profit - total_loss) > 0)
+            current_stake = strategy.next_stake(stake, last_won)
             if current_stake is None:
                 break
 
@@ -372,14 +374,20 @@ def cmd_autobet(args: argparse.Namespace) -> int:
                     dry_run=False,
                 )
 
-                # Calculate outcome
-                won = result.get("data", {}).get("round", {}).get("won", False)
+                # Calculate outcome. Derive `won` from the payout rather than
+                # the response's `won` field: the API does not populate that
+                # field on the round object, so reading it made every round
+                # look like a loss. Outcome-aware strategies (Paroli presses,
+                # Martingale resets) mis-fired on it for years of blind
+                # custom_steps runs that never noticed.
                 net = Decimal(str(result.get("data", {}).get("round", {}).get("amount_won", 0))) - current_stake
+                won = net > 0
 
                 total_profit += net if net > 0 else Decimal(0)
                 total_loss += -net if net < 0 else Decimal(0)
                 rounds_played += 1
                 stake = current_stake
+                last_won = won
 
                 # Write round to JSONL
                 round_record = {
