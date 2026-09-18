@@ -48,7 +48,25 @@ USER_AGENT = (
 
 # Cookies worth persisting. ``__cf_bm`` is Cloudflare bot-management and has a
 # ~30 minute TTL, so it is stored but expected to go stale between runs.
-SESSION_COOKIES = ("duel", "__cf_bm", "CookieConsent", "_sp_id", "_sp_ses", "XSRF-TOKEN")
+#
+# ``do_not_share_this_with_anyone_not_even_staff`` is the actual authentication
+# token (its value is prefixed with the account id); the ``duel`` cookie alone
+# does NOT authenticate. Omitting it made every replayed session answer 401 on
+# /api/v2/user while the browser it was captured from stayed logged in.
+# ``cf_clearance`` is the Cloudflare challenge clearance and ``env_class`` pins
+# the deployment the session belongs to (the SPA sets it to "green").
+AUTH_COOKIE = "do_not_share_this_with_anyone_not_even_staff"
+SESSION_COOKIES = (
+    "duel",
+    AUTH_COOKIE,
+    "cf_clearance",
+    "env_class",
+    "__cf_bm",
+    "CookieConsent",
+    "_sp_id",
+    "_sp_ses",
+    "XSRF-TOKEN",
+)
 
 # The bot cookie whose TTL actually governs how long a replayed session lives.
 CF_BM_COOKIE = "__cf_bm"
