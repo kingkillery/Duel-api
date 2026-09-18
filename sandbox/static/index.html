@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>duel-api sandbox</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#0d1117; color:#c9d1d9; font:15px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; max-width:880px; margin:2rem auto; padding:0 1rem; }
+  h1 { font-size:1.2rem; } h1 span { color:#8b949e; font-weight:normal; }
+  a { color:#58a6ff; }
+  form { display:flex; gap:.75rem; flex-wrap:wrap; margin:1rem 0; }
+  label { display:flex; flex-direction:column; gap:.25rem; font-size:.8rem; color:#8b949e; }
+  input { background:#161b22; color:#c9d1d9; border:1px solid #30363d; border-radius:6px; padding:.4rem .6rem; width:8rem; }
+  button { background:#238636; color:#fff; border:0; border-radius:6px; padding:.5rem 1.1rem; font:inherit; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:wait; }
+  table { border-collapse:collapse; margin:1rem 0; width:100%; }
+  th, td { border:1px solid #30363d; padding:.35rem .6rem; text-align:right; }
+  th:first-child, td:first-child { text-align:left; }
+  .verdict { border-left:3px solid #39c5cf; padding:.5rem 1rem; background:#161b22; }
+  .dim { color:#8b949e; } .neg { color:#f85149; } .pos { color:#3fb950; }
+  footer { margin-top:2rem; font-size:.8rem; color:#8b949e; }
+</style>
+</head>
+<body>
+<h1>duel-api sandbox <span>- a backtester that argues with you</span></h1>
+<p>Pick a staking schedule environment. The engine runs offline, in-process, and
+the result is always the same shape of answer. <span class="dim">Source:
+<a href="https://github.com/kingkillery/Duel-api">kingkillery/Duel-api</a></span></p>
+
+<form id="f">
+  <label>edge (0 – 0.05)<input id="edge" type="number" step="0.001" value="0.001"></label>
+  <label>sessions (100 – 50000)<input id="sessions" type="number" value="10000"></label>
+  <label>base stake<input id="base" type="number" step="0.25" value="0.50"></label>
+  <label>seed<input id="seed" type="number" value="0"></label>
+  <button id="go" type="submit">simulate</button>
+</form>
+
+<div id="out"></div>
+
+<footer>The invariant: E[net] = −edge × E[total wagered]. Sizing changes variance,
+never sign. If gambling stops being fun: 1-800-GAMBLER (US) or your national helpline.</footer>
+
+<script>
+const f = document.getElementById('f'), out = document.getElementById('out'), go = document.getElementById('go');
+const fmt = (x, d=4) => (x>=0?'+':'') + x.toFixed(d);
+f.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  go.disabled = true; out.textContent = 'simulating…';
+  try {
+    const r = await fetch('/api/simulate', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({edge:+edge.value, sessions:+sessions.value, base:+base.value, seed:+seed.value})});
+    const j = await r.json();
+    if (j.error) { out.innerHTML = `<p class="neg">${j.error}</p>`; return; }
+    const rows = j.rows.map(r => `<tr><td>${r.label}</td><td>${fmt(r.mean_net)}</td><td>${fmt(r.implied_edge*100,3)}%</td><td>${r.target_probability.toFixed(3)}</td><td>${r.ruin_probability.toFixed(3)}</td><td>${r.mean_wagered.toFixed(2)}</td></tr>`).join('');
+    out.innerHTML = `<table><tr><th>schedule</th><th>EV/session</th><th>implied edge</th><th>P(target)</th><th>P(stop)</th><th>mean wagered</th></tr>${rows}</table>
+      <p>pooled implied edge <b>${fmt(j.pooled_implied_edge*100,3)}%</b> <span class="dim">(true edge ${(j.edge*100).toFixed(3)}%)</span></p>
+      <div class="verdict"><b>Kelly f* = ${j.kelly_fraction.toFixed(6)}</b> — ${j.verdict}.</div>`;
+  } catch (err) { out.innerHTML = `<p class="neg">${err}</p>`; }
+  finally { go.disabled = false; }
+});
+</script>
+</body>
+</html>

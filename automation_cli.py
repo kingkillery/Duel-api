@@ -11,8 +11,9 @@ Examples
     python automation_cli.py games --limit 5
     python automation_cli.py call GET /api/v2/user/settings
 
-Betting is gated: only `dice-bet` can move money (dry-run by default; a live
-bet needs --yes, --enable-betting, --live and --confirm-bet together). See README.md.
+Money can only move through `dice-bet` and `autobet`, both gated: a live bet needs
+--yes plus per-call confirmation and a browser-minted --security-token, and
+`dice-bet` stays a dry run unless --live is given. See README.md for the EV caveat.
 """
 
 from __future__ import annotations
@@ -39,6 +40,11 @@ from automation_client import (
 from decimal import Decimal
 
 from bankroll import BankrollPolicy, EdgeRefused, PlayPolicy
+import doctor
+import paths
+import theme
+import audit
+import demo
 
 
 def _emit(value: object) -> None:
@@ -96,8 +102,14 @@ def _client(args: argparse.Namespace) -> DuelClient:
     return client
 
 
+def _spec_path(args: argparse.Namespace) -> Path:
+    """Explicit --spec wins; otherwise fall back to the packaged copy."""
+    explicit = getattr(args, "spec", None)
+    return Path(explicit) if explicit else paths.default_spec_path()
+
+
 def cmd_spec(args: argparse.Namespace) -> int:
-    spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
+    spec = json.loads(_spec_path(args).read_text(encoding="utf-8"))
     _emit(
         {
             "site_name": spec["site_name"],
@@ -127,7 +139,7 @@ def cmd_spec_check(args: argparse.Namespace) -> int:
     serves. Exit 1 means it drifted (every captured endpoint is suspect) or the
     spec records no hash to compare against.
     """
-    spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
+    spec = json.loads(_spec_path(args).read_text(encoding="utf-8"))
     with _client(args) as client:
         result = client.check_spec_drift(spec)
     _emit(result)
@@ -714,16 +726,65 @@ def cmd_2fa_setup(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Report environment, capabilities, and runnable tiers. Makes no request."""
+    report = doctor.collect(profile=Path(args.profile))
+    if getattr(args, "json", False):
+        _emit(report)
+        return 0
+    print(doctor.render(report))
+    return 0
+
+
+def cmd_demo(args: argparse.Namespace) -> int:
+    """Run the offline strategy comparison. Makes no request."""
+    edge = args.edge if args.edge is not None else demo.BEST_OBSERVED_EDGE
+    result = demo.run(edge=edge, sessions=args.sessions, base=args.base, seed=args.seed)
+    if getattr(args, "json", False):
+        _emit(
+            {
+                "edge": result.edge,
+                "sessions": result.sessions,
+                "base": result.base,
+                "rows": result.rows,
+                "kelly_fraction": result.kelly_fraction,
+                "verdict": result.verdict,
+            }
+        )
+        return 0
+    print(demo.render(result))
+    return 0
+
+
+def cmd_audit(args: argparse.Namespace) -> int:
+    """Summarise local round logs. Makes no request."""
+    result = audit.audit([Path(p) for p in args.files])
+    if getattr(args, "json", False):
+        _emit(
+            {
+                "files": [f.to_dict() for f in result.files],
+                "rounds": result.rounds,
+                "wagered": round(result.wagered, 12),
+                "net": round(result.net, 12),
+                "implied_edge": None
+                if result.implied_edge is None
+                else round(result.implied_edge, 8),
+            }
+        )
+        return 0
+    print(audit.render(result))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="automation_cli.py",
         description=(
             "Duel.com private-API client. Reads are open; state-changing commands "
-            "require --yes. No wagering: that surface is deliberately absent."
+            "require --yes, and the money commands are gated further still."
         ),
     )
     parser.add_argument("--profile", default=str(DEFAULT_PROFILE), help="session profile path")
-    parser.add_argument("--spec", default="site_spec.json", help="path to site_spec.json")
+    parser.add_argument("--spec", default=None, help="path to site_spec.json (default: the packaged copy)")
     parser.add_argument(
         "--yes",
         action="store_true",
@@ -737,6 +798,29 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("spec", help="summarise site_spec.json").set_defaults(func=cmd_spec)
+    p = sub.add_parser(
+        "doctor",
+        help="report environment, optional extras, and which tiers you can run (offline)",
+    )
+    p.add_argument("--json", action="store_true", help="machine-readable report")
+    p.set_defaults(func=cmd_doctor)
+    p = sub.add_parser(
+        "demo",
+        help="offline strategy comparison at duel.com's most favorable edge tier",
+    )
+    p.add_argument("--edge", type=float, default=None, help="house edge override (default: best observed tier, 0.001)")
+    p.add_argument("--sessions", type=int, default=10_000, help="sessions per schedule (default 10000)")
+    p.add_argument("--base", type=float, default=0.50, help="base stake (default 0.50)")
+    p.add_argument("--seed", type=int, default=0, help="deterministic seed")
+    p.add_argument("--json", action="store_true", help="machine-readable results")
+    p.set_defaults(func=cmd_demo)
+    p = sub.add_parser(
+        "audit",
+        help="summarise your own round logs (live_*.jsonl) - implied edge from your results",
+    )
+    p.add_argument("files", nargs="+", help="round log files (JSONL)")
+    p.add_argument("--json", action="store_true", help="machine-readable results")
+    p.set_defaults(func=cmd_audit)
     p = sub.add_parser(
         "spec-check",
         help="compare the live SPA bundle hash to the spec's provenance record",
@@ -872,6 +956,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    theme.configure()
     args = build_parser().parse_args(argv)
     try:
         return int(args.func(args))

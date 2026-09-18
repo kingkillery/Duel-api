@@ -18,6 +18,9 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+build/
+dist/
+*.egg-info/
 
 # Local code-index tooling
 .codegraph/
@@ -28,10 +31,14 @@ captured_bet*.json
 captured_token.json
 *_token.txt
 autobet_live_log.jsonl
-live_s*.jsonl
-live2_s*.jsonl
+live*.jsonl
 probe*.jsonl
 dryrun_*.jsonl
+
+# Local round-ops scratch (one-shot repair/loop scripts, not shipped)
+complete_r20.py
+stop_after_13.py
+goal_run.py
 run_11_summary.json
 run_11_round2_summary.json
 round1_archive/
@@ -44,6 +51,8 @@ _wait_*.py
 _remint_*.py
 _tap_*.out
 _tap_*.err
+_tap_*
+_*_tap.*
 tap_*.out
 tap_*.err
 tap_stdout.txt

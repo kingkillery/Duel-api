@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "duel-api"
+version = "0.1.0"
+description = "Private-API automation for duel.com: session capture, spec-drift detection, and a backtest harness that reports when a bet has negative expected value."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "kingkillery" }]
+keywords = [
+    "private-api",
+    "automation",
+    "session-capture",
+    "cloudflare",
+    "playwright",
+    "provably-fair",
+    "backtesting",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Software Development :: Testing",
+]
+
+# httpx is the single hard dependency: every network command needs it. The heavy
+# optional pieces stay out of a default install so `uvx duel-api doctor` is fast.
+dependencies = ["httpx>=0.27"]
+
+[project.optional-dependencies]
+realtime = ["python-socketio>=5.11"]
+browser = ["playwright>=1.40"]
+pretty = ["rich>=13.0"]
+all = ["python-socketio>=5.11", "playwright>=1.40", "rich>=13.0", "fastapi>=0.110", "uvicorn>=0.29"]
+sandbox = ["fastapi>=0.110", "uvicorn>=0.29"]
+dev = ["pytest>=8.0"]
+
+[project.urls]
+Repository = "https://github.com/kingkillery/Duel-api"
+
+[project.scripts]
+duel-api = "automation_cli:main"
+
+[tool.setuptools]
+py-modules = [
+    "automation_client",
+    "automation_cli",
+    "audit",
+    "bankroll",
+    "demo",
+    "doctor",
+    "paths",
+    "theme",
+    "capture_session",
+    "cdp_token_capture",
+]
+packages = ["backtest", "realtime", "sandbox"]
+
+# site_spec.json is required at runtime and lives at the repository root, so it
+# ships as install data. paths.default_spec_path() looks here after checking a
+# local override and the module directory.
+[tool.setuptools.data-files]
+"share/duel-api" = ["site_spec.json", "paroli.json", "templates/custom_steps.json"]
+
+[tool.setuptools.package-data]
+"sandbox" = ["static/*.html"]
