@@ -125,8 +125,9 @@ class TestCustomStepsStrategy:
         # Third bet (loss -> exhausted)
         assert strategy.next_stake(Decimal("1.50"), False) is None
         strategy = CustomStepsStrategy(Decimal("0.50"), [1.0])
-        strategy.next_stake(Decimal("0.50"), False)  # Advance to end
-        assert strategy.next_stake(Decimal("0.50"), False) is None
+        # A single multiplier is a flat stake, never exhausts (s03 fix).
+        assert strategy.next_stake(Decimal("0.50"), False) == Decimal("0.50000000")
+        assert strategy.next_stake(Decimal("0.50"), True) == Decimal("0.50000000")
     
     def test_resets_on_win(self) -> None:
         strategy = CustomStepsStrategy(Decimal("0.50"), [1.0, 2.0])

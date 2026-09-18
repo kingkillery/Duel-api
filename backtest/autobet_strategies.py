@@ -149,16 +149,24 @@ class CustomStepsStrategy:
         self._index = 0
     
     def next_stake(self, current_stake: Decimal, won: bool) -> Decimal:
+        if len(self._steps) == 1:
+            # A single multiplier is a flat stake, not a sequence to exhaust.
+            # Without this, the engine's initial won=False advances the index
+            # past the only step and the strategy dies before its first bet
+            # (s03_heavy2 played 0 rounds across 15 sessions this way).
+            return (self._base * Decimal(str(self._steps[0]))).quantize(
+                Decimal("0.00000001")
+            )
         if won:
             # Reset to first step on win
             self._index = 0
         else:
             # Advance to next step
             self._index += 1
-        
+
         if self._index >= len(self._steps):
             return None  # Exhausted
-        
+
         multiplier = Decimal(str(self._steps[self._index]))
         return (self._base * multiplier).quantize(Decimal("0.00000001"))
 
