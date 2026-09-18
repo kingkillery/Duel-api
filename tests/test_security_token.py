@@ -15,7 +15,7 @@ def test_security_token_included_in_dice_bet_payload() -> None:
         client.place_dice_bet(
             "0.5",
             bet_type="OVER",
-            currency="USDT",
+            currency=109,
             target="5005",
             security_token="tok",
             confirm=True,
@@ -40,7 +40,7 @@ def test_security_token_omitted_when_not_provided() -> None:
         client.place_dice_bet(
             "0.5",
             bet_type="OVER",
-            currency="USDT",
+            currency=109,
             target="5005",
             confirm=True,
             dry_run=False,

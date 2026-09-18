@@ -404,7 +404,7 @@ def test_dice_bet_dry_run_validates_and_sends_nothing() -> None:
     seen: list = []
     with _recording_client(seen, allow_writes=False) as client:
         result = client.place_dice_bet(
-            "0.5", bet_type="under", currency="USDT", target="5005"
+            "0.5", bet_type="under", currency=109, target="5005"
         )
     assert seen == []
     assert result["dry_run"] is True
@@ -412,8 +412,8 @@ def test_dice_bet_dry_run_validates_and_sends_nothing() -> None:
     assert result["path"] == "/api/v2/dice/bet"
     assert result["payload"] == {
         "amount": "0.5",
-        "bet_type": "UNDER",
-        "currency": "USDT",
+        "bet_type": "under",
+        "currency": 109,
         "target": "5005",
     }
 
@@ -421,14 +421,14 @@ def test_dice_bet_dry_run_validates_and_sends_nothing() -> None:
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"amount": "0", "bet_type": "OVER", "currency": "USDT", "target": "5005"},
-        {"amount": "-1", "bet_type": "OVER", "currency": "USDT", "target": "5005"},
-        {"amount": "abc", "bet_type": "OVER", "currency": "USDT", "target": "5005"},
-        {"amount": "0.5", "bet_type": "SIDEWAYS", "currency": "USDT", "target": "5005"},
+        {"amount": "0", "bet_type": "OVER", "currency": 109, "target": "5005"},
+        {"amount": "-1", "bet_type": "OVER", "currency": 109, "target": "5005"},
+        {"amount": "abc", "bet_type": "OVER", "currency": 109, "target": "5005"},
+        {"amount": "0.5", "bet_type": "SIDEWAYS", "currency": 109, "target": "5005"},
         {"amount": "0.5", "bet_type": "OVER", "currency": "", "target": "5005"},
-        {"amount": "0.5", "bet_type": "OVER", "currency": "USDT", "target": "50.05"},
-        {"amount": "0.5", "bet_type": "OVER", "currency": "USDT", "target": "99"},
-        {"amount": "0.5", "bet_type": "OVER", "currency": "USDT", "target": "9900"},
+        {"amount": "0.5", "bet_type": "OVER", "currency": 109, "target": "50.05"},
+        {"amount": "0.5", "bet_type": "OVER", "currency": 109, "target": "99"},
+        {"amount": "0.5", "bet_type": "OVER", "currency": 109, "target": "9900"},
     ],
 )
 def test_dice_bet_rejects_bad_parameters_before_anything_else(kwargs) -> None:
@@ -446,13 +446,13 @@ def test_dice_bet_live_needs_betting_enabled_and_confirm() -> None:
     with _recording_client(seen, allow_writes=True) as client:
         with pytest.raises(WriteNotAllowed):
             client.place_dice_bet(
-                "0.5", bet_type="OVER", currency="USDT", target="5005", dry_run=False
+                "0.5", bet_type="OVER", currency=109, target="5005", dry_run=False
             )
     with _recording_client(seen, allow_writes=True) as client:
         client.betting_enabled = True
         with pytest.raises(WriteNotAllowed):
             client.place_dice_bet(
-                "0.5", bet_type="OVER", currency="USDT", target="5005", dry_run=False
+                "0.5", bet_type="OVER", currency=109, target="5005", dry_run=False
             )
     assert seen == []
 
@@ -462,7 +462,7 @@ def test_dice_bet_live_enforces_max_stake() -> None:
     with _betting_client(seen) as client:
         with pytest.raises(ValueError, match="max_stake"):
             client.place_dice_bet(
-                "50", bet_type="OVER", currency="USDT", target="5005",
+                "50", bet_type="OVER", currency=109, target="5005",
                 confirm=True, dry_run=False,
             )
     assert seen == []
@@ -472,7 +472,7 @@ def test_dice_bet_live_sends_the_bundle_verified_payload() -> None:
     seen: list = []
     with _betting_client(seen) as client:
         result = client.place_dice_bet(
-            "0.5", bet_type="OVER", currency="USDT", target="5005",
+            "0.5", bet_type="OVER", currency=109, target="5005",
             security_token="tok", confirm=True, dry_run=False,
         )
     assert seen == [
@@ -481,8 +481,8 @@ def test_dice_bet_live_sends_the_bundle_verified_payload() -> None:
             "/api/v2/dice/bet",
             {
                 "amount": "0.5",
-                "bet_type": "OVER",
-                "currency": "USDT",
+                "bet_type": "over",
+                "currency": 109,
                 "security_token": "tok",
                 "target": "5005",
             },
@@ -495,11 +495,48 @@ def test_dice_bet_omits_security_token_key_when_none() -> None:
     seen: list = []
     with _betting_client(seen) as client:
         result = client.place_dice_bet(
-            "0.5", side="OVER", currency="USDT", target=5005,
+            "0.5", side="OVER", currency=109, target=5005,
             security_token=None, confirm=True, dry_run=False,
         )
     assert "security_token" not in seen[0][2]
     assert result == {"ok": True}
+
+def test_dice_bet_resolves_a_currency_code_to_its_balance_type_id() -> None:
+    """A currency *code* is resolved to the numeric id the API requires.
+
+    Live capture from the dice page: the browser sends ``"currency": 101`` for
+    BTC, never the code string. Sending "SOL" made the server answer 500 on
+    every bet; sending 109 is accepted (and then fails only on balance).
+    """
+    seen: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v2/user":
+            return httpx.Response(200, json={"user": {"balances": [
+                {"balance_type": 101, "balance_type_name": "BTC"},
+                {"balance_type": 109, "balance_type_name": "SOL"},
+            ]}})
+        body = json.loads(request.content) if request.content else None
+        seen.append((request.method, request.url.path, body))
+        return httpx.Response(200, json={"ok": True})
+
+    with DuelClient(
+        profile=Path(tempfile.mkdtemp()) / "session.json",
+        transport=httpx.MockTransport(handler),
+        allow_writes=True, betting_enabled=True, max_stake=10.0,
+    ) as client:
+        client.place_dice_bet(
+            "0.5", side="UNDER", currency="SOL", target=5005,
+            security_token="tok", confirm=True, dry_run=False,
+        )
+    assert seen[0][2]["currency"] == 109
+
+
+def test_dice_bet_rejects_an_unresolvable_currency_code() -> None:
+    """An unknown code fails closed rather than betting in the wrong currency."""
+    with _recording_client([], allow_writes=False) as client:
+        with pytest.raises(ValueError, match="balance-type id"):
+            client.place_dice_bet("0.5", side="UNDER", currency="NOPE", target=5005)
 
 
 def test_dice_bet_rejects_conflicting_side_and_bet_type() -> None:
@@ -507,7 +544,7 @@ def test_dice_bet_rejects_conflicting_side_and_bet_type() -> None:
     with _betting_client(seen) as client:
         with pytest.raises(ValueError, match="conflict"):
             client.place_dice_bet(
-                "0.5", side="OVER", bet_type="UNDER", currency="USDT", target="5005",
+                "0.5", side="OVER", bet_type="UNDER", currency=109, target="5005",
             )
     assert seen == []
 

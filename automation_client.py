@@ -34,6 +34,8 @@ from typing import Any, Callable
 
 import httpx
 
+from bankroll import BankrollPolicy, EdgeRefused
+
 ORIGIN = "https://duel.com"
 API_PREFIX = "/api/v2"
 
@@ -251,6 +253,12 @@ class DuelClient:
         # Real-money betting is a further explicit opt-in with a per-bet cap.
         self.betting_enabled = betting_enabled
         self.max_stake = max_stake
+        # Bankroll bookkeeping for the stake-sizing rules in bankroll.py: the
+        # measured edge is recorded from each settled round (rule 2) and
+        # realised PnL feeds the session loss cap (rule 4).
+        self.bankroll: Decimal | str | None = None
+        self.session_realized: Decimal = Decimal(0)
+        self.last_measured_edge: tuple[Decimal, Decimal] | None = None
         # Re-mint __cf_bm once on a Cloudflare challenge before failing.
         self.auto_refresh = auto_refresh
         self._refreshing = False
@@ -666,6 +674,34 @@ class DuelClient:
         """``GET /api/v2/user`` - requires an authenticated session."""
         return self.request("GET", "/api/v2/user")
 
+    def balance_type_id(self, currency: str | int) -> int:
+        """Resolve a currency code to the numeric balance-type id bets expect.
+
+        The bet endpoints take an *integer* balance type, not the code the UI
+        shows: a live capture of the dice page sends ``"currency": 101`` for
+        BTC. A numeric argument is passed straight through; a code such as
+        ``"SOL"`` is looked up in the authenticated account's balances (109).
+        """
+        text = str(currency).strip()
+        if text.isdigit():
+            return int(text)
+        payload = self.profile()
+        user = payload.get("user") if isinstance(payload, dict) else None
+        if not isinstance(user, dict):
+            user = payload
+        balances = user.get("balances") if isinstance(user, dict) else None
+        if isinstance(balances, list):
+            for entry in balances:
+                if not isinstance(entry, dict):
+                    continue
+                name = str(entry.get("balance_type_name", "")).strip().upper()
+                if name == text.upper() and entry.get("balance_type") is not None:
+                    return int(entry["balance_type"])
+        raise ValueError(
+            f"cannot resolve currency {currency!r} to a balance-type id; pass the "
+            "numeric balance_type (109 for SOL) or a currency this account holds"
+        )
+
     def settings(self) -> Any:
         """``GET /api/v2/user/settings`` - requires an authenticated session."""
         return self.request("GET", "/api/v2/user/settings")
@@ -800,6 +836,75 @@ class DuelClient:
         """``GET /api/v2/dice/config`` - dice limits and rules (read-only)."""
         return self.request("GET", DICE_CONFIG_PATH)
 
+    def dice_edge(self, *, target: str | int, side: str = "UNDER") -> tuple[Decimal, Decimal]:
+        """Derive ``(win_chance, multiplier)`` for a dice bet from the live config.
+
+        Rule 2 wants the edge *measured* rather than assumed. Before the first
+        bet there is no settled round to read it from, but the config publishes
+        the house edge for the target's tier; combined with the target's implied
+        win chance that pins both numbers - and their product is what the
+        bankroll rules actually consume.
+
+        Note the config splits its take across the probability and the payout,
+        so an individual number here is approximate; ``p * multiplier`` is the
+        quantity that reproduces ``effective_edge`` exactly.
+        """
+        target_s = str(target).strip()
+        if not target_s.isdigit() or not 200 <= int(target_s) <= 9800:
+            raise ValueError(f"target must be the roll target x100 (200-9800), got {target!r}")
+        side_value = (side or "UNDER").upper()
+        if side_value not in DICE_BET_TYPES:
+            raise ValueError(f"side must be one of {DICE_BET_TYPES}, got {side!r}")
+
+        config = self.dice_config()
+        data = config.get("data") if isinstance(config, dict) else None
+        scaling = (data or {}).get("scaling_edge") if isinstance(data, dict) else None
+        if not isinstance(scaling, dict):
+            raise ValueError("dice config carries no scaling_edge table to read the edge from")
+
+        edge: Decimal | None = None
+        wanted = int(target_s)
+        for key, block in scaling.items():
+            if not isinstance(block, dict):
+                continue
+            try:
+                start, end = int(key), int(block.get("range_to"))
+            except (TypeError, ValueError):
+                continue
+            if start <= wanted <= end:
+                tiers = block.get("tiers") or []
+                if tiers and isinstance(tiers[0], dict) and tiers[0].get("house_edge") is not None:
+                    edge = Decimal(str(tiers[0]["house_edge"]))
+                break
+        if edge is None:
+            raise ValueError(
+                f"no dice config tier covers target {wanted}; refusing to assume an edge"
+            )
+
+        # Under T wins with probability T/10000, over T with (10000-T)/10000.
+        win_chance = Decimal(wanted) / 10000 if side_value == "UNDER" else Decimal(10000 - wanted) / 10000
+        if win_chance <= 0:
+            raise ValueError(f"target {wanted} has no win chance on side {side_value}")
+        return win_chance, (1 - edge) / win_chance
+
+    def balance_for(self, currency: str | int) -> Decimal:
+        """Spendable balance for one currency, as a Decimal (zero if none).
+
+        Sizing rules need the bankroll in the *bet* currency: a bankroll of
+        $11 held in BTC sizes nothing at all in a SOL market.
+        """
+        wanted = self.balance_type_id(currency)
+        payload = self.profile()
+        user = payload.get("user") if isinstance(payload, dict) else None
+        if not isinstance(user, dict):
+            user = payload
+        entries = user.get("balances") if isinstance(user, dict) else None
+        if isinstance(entries, list):
+            for entry in entries:
+                if isinstance(entry, dict) and entry.get("balance_type") == wanted:
+                    return Decimal(str(entry.get("balance", "0")))
+        return Decimal(0)
+
     def place_dice_bet(
         self,
         amount: str | Decimal,
@@ -811,6 +916,8 @@ class DuelClient:
         security_token: str | None = None,
         confirm: bool = False,
         dry_run: bool = True,
+        policy: BankrollPolicy | None = None,
+        edge: tuple[Any, Any] | None = None,
     ) -> dict:
         """``POST /api/v2/dice/bet`` - place one real-money dice bet.
 
@@ -850,8 +957,8 @@ class DuelClient:
                 f"side must be one of {DICE_BET_TYPES}, "
                 f"got {side if side is not None else bet_type!r}"
             )
-        if not currency or not str(currency).strip():
-            raise ValueError("currency must be a non-empty currency code")
+        if currency is None or not str(currency).strip():
+            raise ValueError("currency must be a non-empty currency code or balance-type id")
         try:
             stake = Decimal(str(amount))
         except InvalidOperation:
@@ -871,8 +978,14 @@ class DuelClient:
             )
         payload = {
             "amount": str(amount),
-            "bet_type": side_value,
-            "currency": currency,
+            # The wire enum is lowercase (`r.OVER='over'`, `r.UNDER='under'` in
+            # guestBetHelpers-BKwucoth.js, exported as `d` and aliased to `c` in
+            # the dice chunk). Sending 'UNDER' makes the server 500.
+            "bet_type": side_value.lower(),
+            # The bet endpoints take the *numeric* balance-type id, not the code:
+            # a live capture of the dice page sends `"currency": 101` for BTC.
+            # Sending the code ("SOL") instead makes the server 500 every time.
+            "currency": self.balance_type_id(currency),
             "target": target_s,
         }
         if security_token is not None:
@@ -896,9 +1009,59 @@ class DuelClient:
                 f"stake {stake} exceeds this client's max_stake {self.max_stake}; "
                 "raise max_stake explicitly if you mean it."
             )
-        return self.request(
+        if policy is not None:
+            gate: dict[str, Any] = {"stake": stake, "session_realized": self.session_realized}
+            if getattr(policy, "requires_edge", True):
+                # Edge-based sizing (rules 1-2). A budget policy such as
+                # PlayPolicy has no probability to measure, so it opts out.
+                measured = edge if edge is not None else self.last_measured_edge
+                if measured is None:
+                    raise EdgeRefused(
+                        "rule 2: no measured edge is available, so no stake is authorised. "
+                        "Pass edge=(win_chance, multiplier) or settle a round first - the "
+                        "edge must be measured, never assumed from configuration."
+                    )
+                if self.bankroll is None:
+                    raise EdgeRefused(
+                        "rule 1 needs a bankroll to size against; set client.bankroll "
+                        "(e.g. the balance for the currency being staked)."
+                    )
+                gate.update(
+                    bankroll=self.bankroll,
+                    win_chance=measured[0],
+                    multiplier=measured[1],
+                )
+            policy.check(**gate)
+        result = self.request(
             "POST", DICE_BET_PATH, json_body=payload, confirm=True, _allow_money=True
         )
+        self._record_settled_round(result)
+        return result
+
+    def _record_settled_round(self, result: Any) -> None:
+        """Remember a settled round's measured edge and realised PnL.
+
+        Rule 2 says the edge is measured, never assumed; the response is the
+        only honest source for ``win_chance`` and ``multiplier``.
+        """
+        if not isinstance(result, dict):
+            return
+        data = result.get("data")
+        round_data = data.get("round") if isinstance(data, dict) else None
+        if not isinstance(round_data, dict):
+            return
+        staked, won = round_data.get("amount_currency"), round_data.get("amount_won")
+        if staked is not None and won is not None:
+            try:
+                self.session_realized += Decimal(str(won)) - Decimal(str(staked))
+            except (ArithmeticError, ValueError):
+                pass
+        p, m = round_data.get("win_chance"), round_data.get("multiplier")
+        if p is not None and m is not None:
+            try:
+                self.last_measured_edge = (Decimal(str(p)), Decimal(str(m)))
+            except (ArithmeticError, ValueError):
+                pass
 
     # ----------------------------------------------------------- session health
 

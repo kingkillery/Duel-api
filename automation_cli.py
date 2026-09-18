@@ -36,6 +36,10 @@ from automation_client import (
     WriteNotAllowed,
 )
 
+from decimal import Decimal
+
+from bankroll import BankrollPolicy, EdgeRefused, PlayPolicy
+
 
 def _emit(value: object) -> None:
     print(json.dumps(value, indent=1, sort_keys=True, default=str))
@@ -263,6 +267,36 @@ def cmd_dice_bet(args: argparse.Namespace) -> int:
         with _client(args) as client:
             client.betting_enabled = bool(args.enable_betting)
             client.max_stake = args.max_stake
+            policy = edge = None
+            if args.edge_guard and args.entertainment:
+                raise ValueError(
+                    "--edge-guard and --entertainment are mutually exclusive: the first "
+                    "refuses negative-edge play, the second labels and caps it. Pick one."
+                )
+            if args.edge_guard:
+                cap = args.session_loss_cap
+                policy = BankrollPolicy(
+                    session_loss_cap=Decimal(str(cap)) if cap is not None else None
+                )
+                edge = client.dice_edge(target=args.target, side=args.side)
+                client.bankroll = client.balance_for(args.currency)
+            elif args.entertainment:
+                if args.session_loss_cap is None:
+                    raise ValueError(
+                        "--entertainment requires --session-loss-cap: play mode is defined "
+                        "by its budget, not by its stake."
+                    )
+                policy = PlayPolicy(
+                    stake=Decimal(str(args.amount)),
+                    session_loss_cap=Decimal(str(args.session_loss_cap)),
+                )
+                print(
+                    "entertainment mode: this game has no edge to capture (EV < 0). "
+                    f"Fixed stake {args.amount} every round, hard stop at "
+                    f"{args.session_loss_cap} realised loss. The expected value is "
+                    "negative by design - you are buying rounds, not returns.",
+                    file=sys.stderr,
+                )
             result = client.place_dice_bet(
                 args.amount,
                 side=args.side,
@@ -271,10 +305,15 @@ def cmd_dice_bet(args: argparse.Namespace) -> int:
                 security_token=token,
                 confirm=args.confirm_bet,
                 dry_run=False,
+                policy=policy,
+                edge=edge,
             )
             client.save()
         _emit(result if isinstance(result, dict) else {"result": result})
         return 0
+    except EdgeRefused as exc:
+        print(f"dice-bet: refused by the bankroll policy: {exc}", file=sys.stderr)
+        return 1
     except ValueError as exc:
         print(f"dice-bet: invalid parameters: {exc}", file=sys.stderr)
         return 1
@@ -523,6 +562,30 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="validate and print the would-be payload without sending (the default; no token needed)",
+    )
+    p.add_argument(
+        "--edge-guard",
+        action="store_true",
+        help=(
+            "apply the bankroll stake-sizing rules before sending: derive the edge from "
+            "the live config, size against the balance in the bet currency, and refuse "
+            "the bet when the measured edge is below the EV floor (see bankroll.py)"
+        ),
+    )
+    p.add_argument(
+        "--session-loss-cap",
+        type=float,
+        default=None,
+        help="with --edge-guard, stop once realised session loss reaches this amount",
+    )
+    p.add_argument(
+        "--entertainment",
+        action="store_true",
+        help=(
+            "explicitly play a negative-EV game for entertainment: fixed stake every "
+            "round (never raised after a loss) with a mandatory --session-loss-cap. "
+            "Labelled, not sold as a strategy - see PlayPolicy in bankroll.py"
+        ),
     )
     p.set_defaults(func=cmd_dice_bet)
     sub.add_parser("whoami", help="report authentication status").set_defaults(func=cmd_whoami)
