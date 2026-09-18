@@ -359,6 +359,7 @@ def test_security_token_sends_the_device_uuid() -> None:
     assert (method, path) == ("POST", "/api/v2/user/security/token")
     assert body == {
         "uuid": "11111111-2222-4333-8444-555555555555",
+        "code": "0000",
         "type": "standard",
     }
 
@@ -413,7 +414,6 @@ def test_dice_bet_dry_run_validates_and_sends_nothing() -> None:
         "amount": "0.5",
         "bet_type": "UNDER",
         "currency": "USDT",
-        "security_token": "",
         "target": "5005",
     }
 
@@ -489,6 +489,27 @@ def test_dice_bet_live_sends_the_bundle_verified_payload() -> None:
         )
     ]
     assert result == {"ok": True}
+
+def test_dice_bet_omits_security_token_key_when_none() -> None:
+    """security_token=None (no challenge) -> the key is absent, not empty."""
+    seen: list = []
+    with _betting_client(seen) as client:
+        result = client.place_dice_bet(
+            "0.5", side="OVER", currency="USDT", target=5005,
+            security_token=None, confirm=True, dry_run=False,
+        )
+    assert "security_token" not in seen[0][2]
+    assert result == {"ok": True}
+
+
+def test_dice_bet_rejects_conflicting_side_and_bet_type() -> None:
+    seen: list = []
+    with _betting_client(seen) as client:
+        with pytest.raises(ValueError, match="conflict"):
+            client.place_dice_bet(
+                "0.5", side="OVER", bet_type="UNDER", currency="USDT", target="5005",
+            )
+    assert seen == []
 
 
 def test_generic_request_still_refuses_the_dice_bet_path() -> None:

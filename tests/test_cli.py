@@ -39,3 +39,42 @@ def test_games_start_rejects_a_negative_offset() -> None:
     with pytest.raises(SystemExit):
         parser.parse_args(["games", "--start", "-1"])
     assert parser.parse_args(["games", "--start", "0"]).start == 0
+
+def test_dice_bet_parses_security_token_and_dry_run_flags() -> None:
+    parser = automation_cli.build_parser()
+    args = parser.parse_args(
+        ["dice-bet", "--amount", "0.5", "--side", "OVER", "--currency", "USDT",
+         "--target", "5005", "--security-token", "tok", "--dry-run"]
+    )
+    assert args.security_token == "tok"
+    assert args.dry_run is True
+
+
+def test_dice_bet_security_token_defaults_to_none() -> None:
+    parser = automation_cli.build_parser()
+    args = parser.parse_args(
+        ["dice-bet", "--amount", "0.5", "--side", "OVER", "--currency", "USDT",
+         "--target", "5005"]
+    )
+    assert args.security_token is None
+
+
+def test_dice_bet_live_without_token_raises_argument_error() -> None:
+    """--live with no --security-token is refused before any client exists."""
+    args = automation_cli.build_parser().parse_args(
+        ["--yes", "dice-bet", "--amount", "0.5", "--side", "OVER", "--currency",
+         "USDT", "--target", "5005", "--enable-betting", "--confirm-bet", "--live"]
+    )
+    with pytest.raises(argparse.ArgumentError):
+        automation_cli.cmd_dice_bet(args)
+
+
+def test_live_dice_bet_without_token_reports_a_friendly_error(capsys) -> None:
+    """main() turns the gate into a plain message and exit code 2, no traceback."""
+    rc = automation_cli.main(
+        ["--yes", "dice-bet", "--amount", "0.5", "--side", "OVER", "--currency",
+         "USDT", "--target", "5005", "--enable-betting", "--confirm-bet", "--live"]
+    )
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "Live dice bet requires --security-token" in err

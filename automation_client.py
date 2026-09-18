@@ -757,17 +757,27 @@ class DuelClient:
         self,
         *,
         token_type: str = "standard",
+        code: str = "0000",
         confirm: bool = False,
     ) -> Any:
-        """``POST /api/v2/user/security/token`` - request a 2FA/security challenge.
+        """``POST /api/v2/user/security/token`` - request a security token.
 
         ``token_type`` is one of ``silent`` / ``standard`` / ``onetime`` /
-        ``session-auth``. Sends the caller's device uuid, as the SPA does.
+        ``session-auth``. Sends the caller's device uuid and a security code,
+        as the SPA does. The browser's default first attempt uses the literal
+        sentinel ``"0000"`` — the server accepts it when the account has no
+        2FA enrolled and returns ``invalid_code_entered`` otherwise, at which
+        point a human must supply the real code from their authenticator or
+        email. The response carries ``{token, expires_in, token_type}``.
         """
         return self.request(
             "POST",
             "/api/v2/user/security/token",
-            json_body={"uuid": self.session.device_uuid, "type": token_type},
+            json_body={
+                "uuid": self.session.device_uuid,
+                "code": code,
+                "type": token_type,
+            },
             confirm=confirm,
         )
 
@@ -792,25 +802,31 @@ class DuelClient:
 
     def place_dice_bet(
         self,
-        amount: str,
+        amount: str | Decimal,
         *,
-        bet_type: str,
-        currency: str,
-        target: str,
-        security_token: str = "",
+        side: str | None = None,
+        bet_type: str | None = None,
+        currency: str = "",
+        target: str | int = "",
+        security_token: str | None = None,
         confirm: bool = False,
         dry_run: bool = True,
-    ) -> Any:
+    ) -> dict:
         """``POST /api/v2/dice/bet`` - place one real-money dice bet.
 
         Body (bundle-verified from the ``useDice`` chunk): ``amount`` is the
-        stake as a crypto amount string, ``bet_type`` is ``OVER`` or ``UNDER``,
-        ``currency`` is the currency code, ``security_token`` is ``""`` when
-        no extra security is required (else a token from
-        ``security_token()``, which may need a 2FA code), and ``target`` is
-        the roll target x100 as an integer string (e.g. ``"5005"`` for 50.05).
-        The response carries ``{data: {round: ...}}`` with nonce, seeds and
-        the settled result.
+        stake as a crypto amount string (a Decimal is accepted and
+        stringified), ``side`` is ``OVER`` or ``UNDER`` (the older
+        ``bet_type`` name is accepted as an alias), ``currency`` is the
+        currency code, ``target`` is the roll target x100 as an integer
+        (e.g. ``5005`` for 50.05; the string form is still accepted), and
+        ``security_token`` is the token the site requires for live bets
+        (obtained from the page's own network request, possibly after a 2FA
+        challenge via ``security_token()``). When ``security_token`` is
+        ``None`` - the default, and always true for dry runs - the key is
+        omitted from the payload entirely rather than sent empty. The
+        response carries ``{data: {round: ...}}`` with nonce, seeds and the
+        settled result.
 
         Gates, in order: parameters are validated before anything is sent;
         ``dry_run=True`` (the default) validates and returns the would-be
@@ -818,9 +834,22 @@ class DuelClient:
         ``DuelClient(betting_enabled=True)``, ``confirm=True``, and
         ``amount <= max_stake``.
         """
-        side = (bet_type or "").upper()
-        if side not in DICE_BET_TYPES:
-            raise ValueError(f"bet_type must be one of {DICE_BET_TYPES}, got {bet_type!r}")
+        if side is None and bet_type is None:
+            raise ValueError(
+                "dice bet needs side='OVER' or 'UNDER' (bet_type is accepted as an alias)"
+            )
+        if (
+            side is not None
+            and bet_type is not None
+            and str(side).upper() != str(bet_type).upper()
+        ):
+            raise ValueError(f"side and bet_type conflict: {side!r} vs {bet_type!r}")
+        side_value = str(side if side is not None else bet_type).upper()
+        if side_value not in DICE_BET_TYPES:
+            raise ValueError(
+                f"side must be one of {DICE_BET_TYPES}, "
+                f"got {side if side is not None else bet_type!r}"
+            )
         if not currency or not str(currency).strip():
             raise ValueError("currency must be a non-empty currency code")
         try:
@@ -842,11 +871,12 @@ class DuelClient:
             )
         payload = {
             "amount": str(amount),
-            "bet_type": side,
+            "bet_type": side_value,
             "currency": currency,
-            "security_token": security_token,
             "target": target_s,
         }
+        if security_token is not None:
+            payload["security_token"] = security_token
         if dry_run:
             return {
                 "dry_run": True,
@@ -872,6 +902,35 @@ class DuelClient:
 
     # ----------------------------------------------------------- session health
 
+    
+    def place_dice_bet_with_token(
+        self,
+        amount: str | Decimal,
+        *,
+        side: str | None = None,
+        bet_type: str | None = None,
+        currency: str = '',
+        target: str | int = '',
+        confirm: bool = False,
+        dry_run: bool = True,
+    ) -> dict:
+        """Convenience variant that gets a security token first and places a dice bet."""
+        token_response = self.security_token()
+        token = None
+        if isinstance(token_response, dict):
+            token = token_response.get("token") or token_response.get("security_token") or token_response.get("data", {}).get("token")
+        if token is None:
+            raise ValueError("Could not extract security token from response")
+        return self.place_dice_bet(
+            amount,
+            side=side,
+            bet_type=bet_type,
+            currency=currency,
+            target=target,
+            security_token=token,
+            confirm=confirm,
+            dry_run=dry_run,
+        )
     def session_status(self) -> dict[str, Any]:
         """Offline health summary of the loaded session. Makes no request.
 
