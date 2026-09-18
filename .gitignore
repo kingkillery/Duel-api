@@ -55,3 +55,8 @@ tools/
 token-status.md
 bet-token-status.md
 live11-status.md
+
+# Round evidence stays local (bet history)
+round*_archive/
+run_11_round*_summary.json
+probe[0-9]_s01.jsonl
