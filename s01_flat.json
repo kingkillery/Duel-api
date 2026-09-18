@@ -1,0 +1,12 @@
+{
+  "mode": "flat",
+  "type": "flat",
+  "base_stake": "0.00000100",
+  "currency_id": 101,
+  "target": 5000,
+  "side": "UNDER",
+  "max_loss": "0.00000500",
+  "max_profit": "0.00001000",
+  "max_rounds": 20,
+  "description": "s01_flat: constant base stake"
+}

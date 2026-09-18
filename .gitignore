@@ -21,3 +21,37 @@ venv/
 
 # Local code-index tooling
 .codegraph/
+# Live betting artifacts - tokens are secrets, logs hold bet history
+fresh_token.txt
+token*.json
+captured_bet*.json
+captured_token.json
+*_token.txt
+autobet_live_log.jsonl
+live_s*.jsonl
+live2_s*.jsonl
+probe*.jsonl
+dryrun_*.jsonl
+run_11_summary.json
+run_11_round2_summary.json
+round1_archive/
+round2_archive/
+_accepted_*.json
+*.pid
+_tap_*.py
+_poll_*.py
+_wait_*.py
+_remint_*.py
+_tap_*.out
+_tap_*.err
+tap_*.out
+tap_*.err
+tap_stdout.txt
+tap_stderr.txt
+token_tap.*
+tap_bet2.*
+tools/
+*status*.md
+token-status.md
+bet-token-status.md
+live11-status.md

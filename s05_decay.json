@@ -1,0 +1,16 @@
+{
+ "mode": "custom_steps",
+ "base_stake": "0.00000100",
+ "currency_id": 101,
+ "target": 5000,
+ "side": "UNDER",
+ "custom_steps": [
+  2.0,
+  1.5,
+  1.0
+ ],
+ "max_loss": "0.00000800",
+ "max_profit": "0.00001500",
+ "max_rounds": 100,
+ "description": "s05_decay: cycle [2.0, 1.5, 1.0]"
+}

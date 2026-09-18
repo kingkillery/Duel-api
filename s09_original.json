@@ -1,0 +1,24 @@
+{
+ "mode": "custom_steps",
+ "base_stake": "0.00000100",
+ "currency_id": 101,
+ "target": 5000,
+ "side": "UNDER",
+ "custom_steps": [
+  1,
+  0.94,
+  1.08,
+  0.98,
+  1.04,
+  0.9,
+  1.02,
+  0.96,
+  1.1,
+  0.92,
+  1.06
+ ],
+ "max_loss": "0.00000500",
+ "max_profit": "0.00001000",
+ "max_rounds": 100,
+ "description": "s09_original: cycle [1, 0.94, 1.08, 0.98, 1.04, 0.9, 1.02, 0.96, 1.1, 0.92, 1.06]"
+}

@@ -209,6 +209,210 @@ def cmd_betfeed(args: argparse.Namespace) -> int:
     return 0 if counts else 1
 
 
+from datetime import datetime, timezone
+
+
+def cmd_autobet(args: argparse.Namespace) -> int:
+    """Automated betting session using a strategy config.
+
+    AUTOMATED BETTING. Run with --dry-run first to simulate.
+    Live runs require --yes and --confirm. Balance buffer enforced.
+    """
+    import backtest.autobet_strategies as autobet_strategies
+
+    if not Path(args.config).exists():
+        print(f"config not found: {args.config}", file=sys.stderr)
+        return 1
+
+    try:
+        config = json.loads(Path(args.config).read_text())
+        strategy = autobet_strategies.load_strategy(config)
+    except (json.JSONDecodeError, ValueError, Exception) as e:
+        print(f"invalid config: {e}", file=sys.stderr)
+        return 1
+
+    stake = Decimal(str(config.get("base_stake", "0.01")))
+    state_file = Path(args.profile).parent / "autobet_state.json"
+
+    # Dry-run is local: no session, balance fetch, or live bets.
+    if args.dry_run:
+        total_loss = Decimal(0)
+        total_profit = Decimal(0)
+        rounds_played = 0
+        records = []
+
+        for i in range(100):
+            won = (i % 2) == 0  # Alternate for demo
+            current_stake = strategy.next_stake(stake, won)
+            if current_stake is None:
+                break
+            net = current_stake * (1 if won else -1)
+            total_loss += -net if net < 0 else Decimal(0)
+            total_profit += net if net > 0 else Decimal(0)
+            rounds_played += 1
+            stake = current_stake
+            records.append(
+                {
+                    "round": rounds_played,
+                    "stake": str(current_stake),
+                    "won": won,
+                    "net": str(net),
+                    "cumulative_loss": str(total_loss),
+                    "cumulative_profit": str(total_profit),
+                }
+            )
+            if args.max_loss and total_loss >= Decimal(str(args.max_loss)):
+                break
+            if args.max_profit and total_profit >= Decimal(str(args.max_profit)):
+                break
+            if args.max_rounds and rounds_played >= args.max_rounds:
+                break
+
+        result = {
+            "mode": "dry-run",
+            "rounds_played": rounds_played,
+            "total_loss": str(total_loss),
+            "total_profit": str(total_profit),
+            "net": str(total_profit - total_loss),
+        }
+        if args.out:
+            out_path = Path(args.out)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with out_path.open("w", encoding="utf-8") as f:
+                for rec in records:
+                    f.write(json.dumps(rec) + "\n")
+            result["output"] = str(out_path)
+        _emit(result)
+
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text(json.dumps({"first_run_completed": True}))
+        return 0
+
+    if not Path(args.profile).exists():
+        print(f"session not found: {args.profile}", file=sys.stderr)
+        return 1
+
+    with _client(args) as client:
+        if state_file.exists():
+            state = json.loads(state_file.read_text())
+            if not state.get("first_run_completed", False):
+                print("First run requires --dry-run. Simulate then clear flag if satisfied.", file=sys.stderr)
+                return 1
+        # Get current balance
+        try:
+            balance_info = client.balance_for(args.currency)
+            if balance_info is None:
+                print(f"balance for {args.currency} unknown", file=sys.stderr)
+                return 1
+        except Exception as e:
+            print(f"failed to fetch balance: {e}", file=sys.stderr)
+            return 1
+
+        if isinstance(balance_info, dict):
+            balance = Decimal(str(balance_info.get("balance", 0)))
+        else:
+            balance = Decimal(str(balance_info))
+
+        # Safety: abort if balance < stake + buffer
+        buffer = Decimal("0.00000100")
+        if balance < stake + buffer:
+            print(f"balance {balance} below stake {stake} + buffer {buffer}", file=sys.stderr)
+            return 1
+
+        # Live mode - requires --yes and --confirm
+        if not getattr(args, "yes", False):
+            print("--yes required for live autobet", file=sys.stderr)
+            return 1
+
+        if not getattr(args, "confirm", False):
+            print("--confirm required for live autobet", file=sys.stderr)
+            return 1
+
+
+        # Mirrors dice-bet's live gates: the client refuses to move money
+        # unless betting is explicitly enabled and the stake fits the cap.
+        client.betting_enabled = True
+        token = getattr(args, "security_token", None)
+        client.max_stake = Decimal(str(config.get("max_stake", "0.00000500")))
+        # Execute rounds
+        total_loss = Decimal(0)
+        total_profit = Decimal(0)
+        rounds_played = 0
+        out_path = Path(args.out) if args.out else Path("autobet_rounds.jsonl")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        while True:
+            # Check limits before each round
+            if args.max_loss and total_loss >= Decimal(str(args.max_loss)):
+                break
+            if args.max_profit and total_profit >= Decimal(str(args.max_profit)):
+                break
+            if args.max_rounds and rounds_played >= args.max_rounds:
+                break
+
+            # Get stake from strategy
+            current_stake = strategy.next_stake(stake, (total_profit - total_loss) > 0)
+            if current_stake is None:
+                break
+
+            # Safety check again
+            if balance < current_stake + buffer:
+                print(f"balance {balance} below stake {current_stake} + buffer {buffer}", file=sys.stderr)
+                break
+
+            # Place bet via client.place_dice_bet (not raw request)
+            try:
+                result = client.place_dice_bet(
+                    format(current_stake, "f"),  # fixed notation: '9.4E-7' 422s, '0.00000094' bets
+                    side=args.side,
+                    currency=args.currency,
+                    target=args.target,
+                    security_token=token,
+                    confirm=args.confirm,
+                    dry_run=False,
+                )
+
+                # Calculate outcome
+                won = result.get("data", {}).get("round", {}).get("won", False)
+                net = Decimal(str(result.get("data", {}).get("round", {}).get("amount_won", 0))) - current_stake
+
+                total_profit += net if net > 0 else Decimal(0)
+                total_loss += -net if net < 0 else Decimal(0)
+                rounds_played += 1
+                stake = current_stake
+
+                # Write round to JSONL
+                round_record = {
+                    "round": rounds_played,
+                    "stake": str(current_stake),
+                    "won": won,
+                    "net": str(net),
+                    "cumulative_loss": str(total_loss),
+                    "cumulative_profit": str(total_profit),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                with out_path.open("a") as f:
+                    f.write(json.dumps(round_record) + "\n")
+
+            except EdgeRefused as e:
+                print(f"bet refused: {e}", file=sys.stderr)
+                break
+            except Exception as e:
+                print(f"bet failed: {e}", file=sys.stderr)
+                break
+
+        result = {
+            "mode": "live",
+            "rounds_played": rounds_played,
+            "total_loss": str(total_loss),
+            "total_profit": str(total_profit),
+            "net": str(total_profit - total_loss),
+            "output": str(out_path),
+        }
+        _emit(result)
+        return 0
+
+
 def cmd_dice_bet(args: argparse.Namespace) -> int:
     """Place one dice bet - or dry-run it (the default).
 
@@ -538,6 +742,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--duration", type=float, default=60.0, help="seconds to listen before disconnecting")
     p.add_argument("--out", default=None, help="append raw events to this JSONL file")
     p.set_defaults(func=cmd_betfeed)
+    p = sub.add_parser(
+        "autobet",
+        help="automated betting session with strategy config (run --dry-run first)",
+    )
+    p.add_argument("--config", required=True, help="path to strategy config JSON")
+    p.add_argument("--dry-run", action="store_true", help="simulate 100 rounds without placing bets")
+    p.add_argument("--max-loss", type=float, help="stop if cumulative loss reaches this amount")
+    p.add_argument("--max-profit", type=float, help="stop if cumulative profit reaches this amount")
+    p.add_argument("--max-rounds", type=int, help="stop after this many rounds")
+    p.add_argument("--currency", required=True, help="currency code, e.g. BTC")
+    p.add_argument("--side", required=True, choices=["OVER", "UNDER"], help="roll over or under the target")
+    p.add_argument("--target", required=True, help="roll target x100 as an integer string")
+    p.add_argument("--out", help="output path for rounds JSONL")
+    p.add_argument("--confirm", action="store_true", help="confirm live autobet (requires --yes)")
+    p.add_argument("--security-token", default=None, help="one-time betting token (required by the site for live bets)")
+    p.set_defaults(func=cmd_autobet)
+
     p = sub.add_parser(
         "dice-bet",
         help=(
