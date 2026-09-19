@@ -14,14 +14,14 @@ timing JSON.
 
 ## Schedule
 
-| Week | Episode | Title | Channel | Goal |
-| ---- | ------- | ----- | ------- | ---- |
-| 1 | EP01 (exists) | Hero demo (re-render) | YouTube + X | Re-render `docs/demo.mp4` — CTA still says "297 tests", now 331 |
-| 2 | EP02 | The bot that refuses to bet | YouTube + X | Flagship: HALT honesty, protocol verdict gates |
-| 3 | EP03 | Sizing changes variance, never the sign | YouTube + blog/SEO | Backtester fails closed; Kelly returns exactly zero |
-| 4 | EP04 | Your first verdict in 5 minutes | YouTube + docs | Capture → dry-run → `next_round`; onboarding conversion |
-| 5 | EP05 | 0.30 µBTC bankroll diaries | X thread + Shorts | Micro-bankroll saga (62W/2L, then the honest HALT) |
-| 6 | — | Docs site launch (mkdocs) | SEO | Evergreen funnel for all episodes |
+| Week | Date | Episode | Title | Channel | Goal |
+| ---- | ---- | ------- | ----- | ------- | ---- |
+| 1 | **2026-09-20** | EP01 (exists) | Hero demo (re-render) | YouTube + X | Re-render `docs/demo.mp4` — CTA still says "297 tests", now 331 |
+| 2 | **2026-09-27** | EP02 | The bot that refuses to bet | YouTube + X | Flagship: HALT honesty, protocol verdict gates |
+| 3 | **2026-10-04** | EP03 | Sizing changes variance, never the sign | YouTube + blog/SEO | Backtester fails closed; Kelly returns exactly zero |
+| 4 | **2026-10-11** | EP04 | Your first verdict in 5 minutes | YouTube + docs | Capture → dry-run → `next_round`; onboarding conversion |
+| 5 | **2026-10-18** | EP05 | 0.30 µBTC bankroll diaries | X thread + Shorts | Micro-bankroll saga (62W/2L, then the honest HALT) |
+| 6 | **2026-10-25** | — | Docs site launch (mkdocs) | SEO | Evergreen funnel for all episodes |
 
 Cadence after week 6: one short (vertical cut of the best-performing
 30 seconds) per week; one full episode per month driven by real ledger
