@@ -59,7 +59,8 @@ tap_stdout.txt
 tap_stderr.txt
 token_tap.*
 tap_bet2.*
-tools/
+# Local generator tools (tracked explicitly when needed)
+
 *status*.md
 token-status.md
 bet-token-status.md

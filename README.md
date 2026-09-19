@@ -4,7 +4,8 @@
 
 I reverse-engineered the site's undocumented API, built the session-capture and drift-detection machinery to talk to it reliably, then built the strategy tester everyone actually wants — and it returned `optimal stake = 0` at every observed edge tier. That result shipped as a feature.
 
-![demo](docs/assets/demo.svg)
+[![duel-api demo](docs/demo.gif)](docs/demo-voiced.mp4)
+*Click the demo above to watch the full 60s voiced product video with captions & sound.*
 
 ## Install
 

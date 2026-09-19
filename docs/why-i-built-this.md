@@ -35,7 +35,7 @@ This project is free, MIT-licensed, and the analysis above is the point. If you 
 
 and if you're signing up regardless, using the author's referral link costs you nothing and funds more work like this:
 
-> **Referral:** `https://duel.com/r/YOUR_CODE` *(placeholder — set before publishing)*
+> **Referral:** `https://duel.com/r/jumpyhitman`
 
 It is a footnote on purpose. If the referral ever becomes the pitch, the tool has failed at its one job.
 

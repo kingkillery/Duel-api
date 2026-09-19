@@ -1,0 +1,131 @@
+{
+  "beats": {
+    "hook": {
+      "dur": 10.66,
+      "span": 11.01,
+      "start": 0.0,
+      "text": "Every gambling bot on GitHub promises to print money. I reverse-engineered an undocumented crypto casino API to test them all... and the backtester proved you shouldn't bet.",
+      "cues": [
+        {
+          "start": 0.05,
+          "end": 3.207547,
+          "text": "Every gambling bot on GitHub promises to print money."
+        },
+        {
+          "start": 3.207547,
+          "end": 10.589623,
+          "text": "I reverse-engineered an undocumented crypto casino API to test them all... and the backtester proved you shouldn't bet."
+        }
+      ]
+    },
+    "recon": {
+      "dur": 14.98,
+      "span": 15.33,
+      "start": 11.01,
+      "text": "This is duel-api. Reverse-engineered directly from Chrome DevTools protocol traces. It tracks JavaScript bundle drift, manages thirty-minute token lifetimes, and locks live money execution behind four mandatory safety gates.",
+      "cues": [
+        {
+          "start": 0.05,
+          "end": 1.568396,
+          "text": "This is duel-api."
+        },
+        {
+          "start": 1.568396,
+          "end": 5.754717,
+          "text": "Reverse-engineered directly from Chrome DevTools protocol traces."
+        },
+        {
+          "start": 5.754717,
+          "end": 14.905661,
+          "text": "It tracks JavaScript bundle drift, manages thirty-minute token lifetimes, and locks live money execution behind four mandatory safety gates."
+        }
+      ]
+    },
+    "gauntlet": {
+      "dur": 10.66,
+      "span": 11.01,
+      "start": 26.34,
+      "text": "Then came the backtester everyone actually wanted. Ten thousand simulated sessions across every system traders swear by. Flat stake. Martingale. Fibonacci.",
+      "cues": [
+        {
+          "start": 0.05,
+          "end": 2.865566,
+          "text": "Then came the backtester everyone actually wanted."
+        },
+        {
+          "start": 2.865566,
+          "end": 7.570755,
+          "text": "Ten thousand simulated sessions across every system traders swear by."
+        },
+        {
+          "start": 7.570755,
+          "end": 8.632076,
+          "text": "Flat stake."
+        },
+        {
+          "start": 8.632076,
+          "end": 9.587265,
+          "text": "Martingale."
+        },
+        {
+          "start": 9.587265,
+          "end": 10.613208,
+          "text": "Fibonacci."
+        }
+      ]
+    },
+    "verdict": {
+      "dur": 16.99,
+      "span": 17.34,
+      "start": 37.35,
+      "text": "Here is the math: sizing changes variance, but never the sign. Expected net equals negative edge times total wagered. At every observed tier, fractional Kelly returns exactly zero. The tool's most useful feature is that it fails closed.",
+      "cues": [
+        {
+          "start": 0.05,
+          "end": 4.268868,
+          "text": "Here is the math: sizing changes variance, but never the sign."
+        },
+        {
+          "start": 4.268868,
+          "end": 8.596698,
+          "text": "Expected net equals negative edge times total wagered."
+        },
+        {
+          "start": 8.596698,
+          "end": 13.466982,
+          "text": "At every observed tier, fractional Kelly returns exactly zero."
+        },
+        {
+          "start": 13.466982,
+          "end": 16.922171,
+          "text": "The tool's most useful feature is that it fails closed."
+        }
+      ]
+    },
+    "cta": {
+      "dur": 6.53,
+      "span": 6.53,
+      "start": 54.69,
+      "text": "Two hundred and ninety-seven tests. Zero dependencies for the engine. Inspect the math for yourself on GitHub.",
+      "cues": [
+        {
+          "start": 0.05,
+          "end": 1.898585,
+          "text": "Two hundred and ninety-seven tests."
+        },
+        {
+          "start": 1.898585,
+          "end": 4.150944,
+          "text": "Zero dependencies for the engine."
+        },
+        {
+          "start": 4.150944,
+          "end": 6.462264,
+          "text": "Inspect the math for yourself on GitHub."
+        }
+      ]
+    }
+  },
+  "_total": 61.25,
+  "_gap_ms": 350
+}
