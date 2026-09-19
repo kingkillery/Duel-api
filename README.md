@@ -9,13 +9,23 @@ I reverse-engineered the site's undocumented API, built the session-capture and 
 
 ## Install
 
-Zero-install with [uv](https://docs.astral.sh/uv/) (recommended):
+**Public download** — no account, no repository access (verified end-to-end):
 
 ```console
-$ uvx --from "git+https://github.com/kingkillery/Duel-api" duel-api doctor
+$ uvx --from "https://huggingface.co/datasets/pkkidking/duel-api-dl/resolve/main/duel-api-index/dist/duel_api-0.2.2-py3-none-any.whl" duel-api doctor
 ```
 
-Or the usual ways:
+Or with plain pip:
+
+```console
+$ pip install "https://huggingface.co/datasets/pkkidking/duel-api-dl/resolve/main/duel-api-index/dist/duel_api-0.2.2-py3-none-any.whl"
+```
+
+Every released file (wheel + sdist, all versions) is listed at
+[`pkkidking/duel-api-dl`](https://huggingface.co/datasets/pkkidking/duel-api-dl/tree/main/duel-api-index/dist)
+— swap the filename to pin a version.
+
+From source (requires access to the repository):
 
 ```console
 $ pipx install git+https://github.com/kingkillery/Duel-api
