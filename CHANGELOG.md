@@ -4,6 +4,27 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); versioning follows
 [SemVer](https://semver.org/).
 
+## [0.2.2] — 2026-09-19
+
+Hosted downloads on Hugging Face (install path, no PyPI).
+
+### Added
+
+- `.github/workflows/hosted-index.yml`: on a `v*` tag, runs the full suite
+  and smoke, uploads the sdist/wheel to `pkkidking/duel-api-dl`, and
+  rebuilds the `pip --find-links` index from the remote listing.
+- `tools/build_simple_index.py`: index builder (wheel/sdist filtering,
+  relative links).
+- `tools/set_hf_token.py`: masked local input box that writes `HF_TOKEN`
+  to `.env` and pushes the Actions secrets via `gh`.
+- `docs/hosted-downloads.md`: install lines, maintainer setup, and the
+  isolation contract for the hosting repo.
+
+### Changed
+
+- Release artifacts are served from a dedicated **public** dataset repo.
+  The maintainer's existing private bucket is not written to at all.
+
 ## [0.2.1] — 2026-09-19
 
 Week-1 production batch (no runtime behavior changes).
