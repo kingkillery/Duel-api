@@ -32,3 +32,38 @@ jobs:
         PYTHONPATH: .
       run: |
         pytest
+
+  smoke:
+    # Proves the shipped install actually works: entry points resolve and the
+    # offline engine runs with zero network. Catches packaging breakage
+    # before users do.
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.13"
+
+    - name: Install package
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .
+
+    - name: Entry points and offline engine
+      run: |
+        duel-api --help
+        duel-api demo --sessions 200
+        duel-api doctor
+
+  gitleaks:
+    # Session tokens, cookies, and API keys must never reach the public repo.
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - uses: gitleaks/gitleaks-action@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

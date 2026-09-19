@@ -1,0 +1,42 @@
+{
+  "_note": "ESTIMATED timings for EP02. Replace with measured TTS timings before rendering. Schema matches tools/narration-timing.json.",
+  "beats": {
+    "hook": {
+      "dur": 10.5,
+      "span": 11.0,
+      "start": 0.0,
+      "text": "Every betting bot promises to print money. Mine just told me... to do nothing. And that refusal is the most valuable output it has ever produced.",
+      "cues": []
+    },
+    "recon": {
+      "dur": 14.5,
+      "span": 15.0,
+      "start": 11.0,
+      "text": "This is duel-api's loss switch-up protocol. Before it names any bet, it checks three things: can this family afford the entry, does the worst case stay above the floor, and is the total exposure fundable — the SUM over all eleven slots, not the average, not the best case.",
+      "cues": []
+    },
+    "gauntlet": {
+      "dur": 10.5,
+      "span": 11.0,
+      "start": 26.0,
+      "text": "Watch it work. Balance: zero point six four micro-BTC. Floor: zero point three. Plan one exposure sums to over one micro — more than the account holds. Every family fails the same check, one by one, with its reason printed next to it.",
+      "cues": []
+    },
+    "verdict": {
+      "dur": 16.5,
+      "span": 17.0,
+      "start": 37.0,
+      "text": "Here is the discipline most tools will never show you: naming an unrunnable command would be a lie, so the protocol halts instead. No blended exposure, no silent clamp, no bet sized on hope. A tool that says don't is a tool you can trust when it says do.",
+      "cues": []
+    },
+    "cta": {
+      "dur": 6.5,
+      "span": 6.5,
+      "start": 54.0,
+      "text": "Three hundred thirty-one tests pin these gates. Inspect the math yourself — link below. And if you sign up there, it supports the channel at no cost to you.",
+      "cues": []
+    }
+  },
+  "_total": 60.5,
+  "_gap_ms": 350
+}
