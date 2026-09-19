@@ -9,30 +9,27 @@ I reverse-engineered the site's undocumented API, built the session-capture and 
 
 ## Install
 
-**Public download** — no account, no repository access (verified end-to-end):
+One line (GitHub Pages simple index — preferred):
+
+```console
+$ pip install --extra-index-url https://kingkillery.github.io/Duel-api/simple/ duel-api
+```
+
+Direct wheel (Hugging Face mirror, no index needed):
 
 ```console
 $ uvx --from "https://huggingface.co/datasets/pkkidking/duel-api-dl/resolve/main/duel-api-index/dist/duel_api-0.2.2-py3-none-any.whl" duel-api doctor
-```
-
-Or with plain pip:
-
-```console
 $ pip install "https://huggingface.co/datasets/pkkidking/duel-api-dl/resolve/main/duel-api-index/dist/duel_api-0.2.2-py3-none-any.whl"
 ```
 
-Every released file (wheel + sdist, all versions) is listed at
-[`pkkidking/duel-api-dl`](https://huggingface.co/datasets/pkkidking/duel-api-dl/tree/main/duel-api-index/dist)
-— swap the filename to pin a version.
-
-From source (requires access to the repository):
+From source:
 
 ```console
 $ pipx install git+https://github.com/kingkillery/Duel-api
 $ git clone https://github.com/kingkillery/Duel-api && pip install -e ".[all]"
 ```
 
-Requires Python ≥ 3.10. Heavy extras are opt-in: `[browser]` (playwright), `[realtime]` (socket.io), `[sandbox]` (fastapi), `[pretty]` (rich).
+Requires Python ≥ 3.10. Heavy extras are opt-in: `[browser]` (playwright), `[realtime]` (socket.io), `[sandbox]` (fastapi), `[pretty]` (rich). Details: [docs/hosted-downloads.md](docs/hosted-downloads.md).
 
 ## First run
 

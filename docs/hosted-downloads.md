@@ -1,78 +1,51 @@
 # Hosted downloads
 
-Public installs come from a **public Hugging Face dataset repo** —
-`pkkidking/duel-api-dl`. No server, no new account, nothing touching the
-home network: GitHub CI uploads with a scoped token, users download from
-Hugging Face's CDN.
+Public installs are served two ways:
 
-**Status: live.** `v0.2.2` was published and installed end-to-end
-(`2026-09-19`).
+1. **Preferred — GitHub Pages PEP 503 index** (`text/html`):
+   `https://kingkillery.github.io/Duel-api/simple/`
+2. **Mirror — Hugging Face dataset** `pkkidking/duel-api-dl` (direct wheel URLs).
 
-## For users (verified)
+Nothing touches the home network: GitHub Actions builds and publishes;
+users download from GitHub Pages / Hugging Face CDN.
 
-One line, no account, no repository access:
+## For users
+
+One-line index install:
+
+```bash
+pip install --extra-index-url https://kingkillery.github.io/Duel-api/simple/ duel-api
+```
+
+Direct wheel (pin a version by filename):
 
 ```bash
 uvx --from "https://huggingface.co/datasets/pkkidking/duel-api-dl/resolve/main/duel-api-index/dist/duel_api-0.2.2-py3-none-any.whl" duel-api doctor
 ```
 
-or plain pip:
+Source:
 
 ```bash
-pip install "https://huggingface.co/datasets/pkkidking/duel-api-dl/resolve/main/duel-api-index/dist/duel_api-0.2.2-py3-none-any.whl"
+pipx install git+https://github.com/kingkillery/Duel-api
 ```
 
-All released files — every version, wheel and sdist — are listed at
-<https://huggingface.co/datasets/pkkidking/duel-api-dl/tree/main/duel-api-index/dist>.
-Swap the filename to pin a different version; the pinned URL *is* the
-reproducible install.
+## Why Pages for the index
 
-## Why not `pip --find-links`
+Hugging Face deliberately serves `.html` as `text/plain` (anti-phishing),
+and pip rejects that Content-Type for indexes. GitHub Pages serves real
+`text/html`, so `--extra-index-url` works. The HF tree remains a browsable
+mirror of every released wheel/sdist.
 
-The workflow also publishes a standard PEP 503 index page
-(`duel-api-index/simple/duel-api/index.html`), and it is publicly readable —
-but **pip refuses it**. Hugging Face deliberately serves `.html` files as
-`text/plain` (anti-phishing policy for hosted repos), and pip only accepts
-`text/html` or the PEP 691 JSON types for an index page:
+## Maintainer automation
 
-```text
-WARNING: Skipping page ... because the GET request got Content-Type:
-text/plain; charset=utf-8. The only supported Content-Types are
-application/vnd.pypi.simple.v1+json, application/vnd.pypi.simple.v1+html,
-and text/html
-```
+- Tag `v*` → `Pages index` workflow builds, tests, assembles `site/`, deploys
+  to `kingkillery.github.io/Duel-api/`.
+- Same tag → `Hosted index` workflow mirrors artifacts into
+  `pkkidking/duel-api-dl` under `duel-api-index/` (isolation-scoped).
+- Manual re-publish: Actions → Pages index → Run workflow.
 
-Consequences, honestly stated:
+## Isolation contract (HF mirror)
 
-- The index page is kept as a human-browsable listing, not as a pip index.
-- There is **no** stable "always-latest" URL: a wheel copy named
-  `duel_api-latest-*.whl` is rejected by pip (`Invalid wheel filename
-  (invalid version)`), verified.
-- A true one-line index (`pip install --extra-index-url … duel-api`) needs
-  a host that serves `text/html` — e.g. Cloudflare R2 or a static HF Space.
-  Neither is set up. The direct wheel URL above works today.
-
-## Maintainer setup (done, for reference)
-
-1. Public **dataset repo** `pkkidking/duel-api-dl` was created for this
-   purpose (the original `pkkidking/privatepk` is a *private* bucket and is
-   deliberately not used).
-2. A Hugging Face **write token** (`ally`) is stored locally in `.env`
-   (gitignored) and in the repo's Actions secrets.
-3. Actions secrets: `HF_TOKEN`, `HF_REPO=pkkidking/duel-api-dl`,
-   `HF_REPO_TYPE=dataset`, `HF_PREFIX=duel-api-index`.
-   Set locally with `tools/set_hf_token.py` (masked input box) or in the
-   GitHub UI.
-4. Push a `v*` tag → the workflow runs the suite + smoke, uploads the new
-   sdist/wheel, and rebuilds the index listing.
-
-## Isolation contract
-
-- Every written path is asserted in-code to start with `<prefix>/`. Other
-  paths abort the run.
-- Uploads are additive file puts only — never a sync-with-delete, never a
-  read-modify of anything outside the prefix.
-- `pkkidking/privatepk` (the maintainer's private bucket, holding existing
-  data) is **never written to** — different repo entirely.
-- Footprint in the hosting repo: one `duel-api-index/` folder plus additive
-  commit history.
+- Every written path is asserted in-code to start with `<prefix>/`.
+- Uploads are additive file puts only — never sync-with-delete.
+- `pkkidking/privatepk` is never written to.

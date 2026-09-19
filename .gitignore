@@ -75,3 +75,6 @@ live11-status.md
 round*_archive/
 run_11_round*_summary.json
 probe[0-9]_s01.jsonl
+
+# Generated GitHub Pages assemble output (CI artifact only)
+site/
