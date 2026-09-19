@@ -55,11 +55,13 @@ $ duel-api demo
 
 - **A private-API methodology, production-grade.** Capture → Spec → Replay → Refresh, a bundle-hash drift tripwire, typed failure taxonomy, tri-state session staleness, bounded auto-refresh (exactly 2 requests).
 - **An honest backtester.** AST-guarded network-free, Monte Carlo, fractional Kelly — which *fails closed* at negative EV.
-- **297 tests**, MIT-licensed.
+- **A loss switch-up protocol.** `next_round.py` names only runnable commands — entry affordability and floor safety per family, plan1 exposure as the SUM over its 11 slots, recovery stakes clamped to the bankroll, `HALT` with reasons when nothing is fundable — against a 0.30 µBTC floor (micro-bankroll reset 2026-09-19, was 75.00). `run_single_round.py` refuses 0-round ledger rows and takes a pasted browser token (`--token`), then REST mint, then CDP capture.
+- **331 tests**, MIT-licensed. `tests/test_protocol_funding.py` (20 cases) pins the verdict gates and the rule that a 0-round 0-net row is not a settled round.
 
 ## What this isn't
 
 - A money printer. `E[net] = −edge × E[total wagered]`; sizing changes variance, never sign. Full analysis: [docs/backtest-math.md](docs/backtest-math.md).
+- Offline policy arithmetic. `target_hit_policy.py` / `next_bet.py` are local calculations only — exit 0 and an `ADVANCE` entry never establish a live quote, settled bet, or balance.
 
 ## What it won't do
 

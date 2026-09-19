@@ -1,7 +1,8 @@
 """Single-config round flow (Plan 4+): archive prior paroli log, capture token,
 run ONE strategy config live, archive output, append session ledger.
 
-Usage:  py -3.13 run_single_round.py <round_number> <config.json>
+Usage:  py -3.13 run_single_round.py <round_number> <config.json> [--note "..."] [--token <browser-security-token>]
+(CLI-minted tokens are rejected with 400 incorrect_2fa; paste one from DevTools Network POST dice/bet.)
 """
 import asyncio, json, os, shutil, subprocess, sys, time
 from decimal import Decimal as D
@@ -12,6 +13,7 @@ CFG = sys.argv[2]
 STEM = Path(CFG).stem
 OUT = Path(f"live_{STEM}.jsonl")
 NOTE = sys.argv[sys.argv.index("--note") + 1] if "--note" in sys.argv else None
+TOK_OVERRIDE = sys.argv[sys.argv.index("--token") + 1] if "--token" in sys.argv else None
 
 
 def archive_prev(n):
@@ -97,9 +99,11 @@ def preflight():
 
 
 def run_live(spec, tok, max_rounds):
+    # Currency follows the config: 101 -> BTC, 109 -> SOL (balance-type ids).
+    code = {101: "BTC", 109: "SOL"}.get(int(spec.get("currency_id", 101)), "BTC")
     cmd = [
         "py", "-3.13", "automation_cli.py", "--yes", "autobet",
-        "--config", CFG, "--currency", "BTC",
+        "--config", CFG, "--currency", code,
         "--side", str(spec.get("side", "UNDER")),
         "--target", str(spec.get("target", 5000)),
         "--max-loss", str(spec.get("max_loss", "0.00000300")),
@@ -136,8 +140,12 @@ def parse_jsonl():
     return (sum(nets, D(0)) if nets else D(0)), len(nets), wins, losses
 
 
-def append_ledger(n, net, rounds, note):
-    d = json.loads(Path("session_ledger.json").read_text())
+def append_ledger(n, net, rounds, note, path=Path("session_ledger.json")):
+    if int(rounds or 0) <= 0:
+        raise ValueError(
+            f"refusing to record round {n}: 0 rounds settled. An unfunded or "
+            "no-op attempt is not a round (next_round.py is_settled ignores it).")
+    d = json.loads(path.read_text())
     row = {"n": n, "net": str(net), "rounds": rounds, "note": note}
     existing = next((i for i, r in enumerate(d["rounds"]) if r.get("n") == n), None)
     if existing is not None:
@@ -146,7 +154,7 @@ def append_ledger(n, net, rounds, note):
         d["rounds"].append(row)
     d["session_total"] = str(sum(D(str(r["net"])) for r in d["rounds"]))
     d["session_total_source"] = "sum_of_round_nets"
-    Path("session_ledger.json").write_text(json.dumps(d, indent=1))
+    path.write_text(json.dumps(d, indent=1))
     return d["session_total"]
 
 
@@ -160,21 +168,31 @@ def main():
     # after archiving (round_flow.py does the same as its "clear" step).
     if OUT.exists():
         OUT.unlink()
-    tok = mint_token_rest()
+    tok = TOK_OVERRIDE
     if tok:
-        print(f"[{time.strftime('%H:%M:%S')}] REST-minted token (len {len(tok)})", flush=True)
+        print(f"[{time.strftime('%H:%M:%S')}] using pasted browser token (len {len(tok)})", flush=True)
         Path("fresh_token.txt").write_text(tok)
     else:
-        print(f"[{time.strftime('%H:%M:%S')}] falling back to CDP token capture...", flush=True)
-        tok = asyncio.run(capture_token())
-        if not tok:
-            sys.exit("TOKEN CAPTURE FAILED (REST + CDP)")
-        print(f"[{time.strftime('%H:%M:%S')}] CDP token captured (len {len(tok)})", flush=True)
-        Path("fresh_token.txt").write_text(tok)
+        tok = mint_token_rest()
+        if tok:
+            print(f"[{time.strftime('%H:%M:%S')}] REST-minted token (len {len(tok)})", flush=True)
+            Path("fresh_token.txt").write_text(tok)
+        else:
+            print(f"[{time.strftime('%H:%M:%S')}] falling back to CDP token capture...", flush=True)
+            tok = asyncio.run(capture_token())
+            if not tok:
+                sys.exit("TOKEN CAPTURE FAILED (REST + CDP)")
+            print(f"[{time.strftime('%H:%M:%S')}] CDP token captured (len {len(tok)})", flush=True)
+            Path("fresh_token.txt").write_text(tok)
 
     rr = run_live(spec, tok, max_rounds)
     net, rounds, wins, losses = parse_jsonl()
     print(f"\n{STEM}: exit={rr.returncode} rounds={rounds} W/L={wins}/{losses} net={net}")
+    if rounds == 0:
+        print("STDERR:", (rr.stderr or "")[-800:])
+        print(f"NO ROUND SETTLED (exit={rr.returncode}, rounds=0): the runner "
+              "refused or aborted before any wager. Ledger left unchanged.")
+        sys.exit(rr.returncode or 1)
     if rr.returncode != 0:
         print("STDERR:", (rr.stderr or "")[-800:])
 

@@ -1,0 +1,13 @@
+{
+ "base_stake": "0.00000005",
+ "buffer": "0.00000010",
+ "currency_id": 101,
+ "description": "s13_glacier_micro: s12 scaled 10x for ~0.6u bankroll - 98% win chance (UNDER 9800, 1.0194x), flat 0.05u, buffer 0.10u, +/-0.30u caps, 20 rounds.",
+ "max_loss": "0.00000030",
+ "max_profit": "0.00000010",
+ "max_rounds": 20,
+ "mode": "flat",
+ "side": "UNDER",
+ "target": 9800,
+ "type": "flat"
+}

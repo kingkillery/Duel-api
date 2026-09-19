@@ -1,0 +1,14 @@
+{
+ "base_stake": "0.00050000",
+ "buffer": "0.00100000",
+ "currency_id": 109,
+ "description": "s14_glacier_micro_sol: s13 ported to SOL - 0.053 SOL bankroll, 98% win chance (UNDER 9800, 1.0194x), flat 0.0005 SOL (~1%), buffer 0.001 SOL, max-loss 0.003 SOL (~5.7%), 20 rounds.",
+ "max_stake": "0.00060000",
+ "max_loss": "0.00300000",
+ "max_profit": "0.00100000",
+ "max_rounds": 20,
+ "mode": "flat",
+ "side": "UNDER",
+ "target": 9800,
+ "type": "flat"
+}

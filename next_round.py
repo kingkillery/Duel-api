@@ -7,7 +7,7 @@ Protocol:
   - After any losing round the next round must SWITCH strategy family
     (LADDER rotation, never re-run the same family) and run a capped
     recovery spec sized to the loss.
-  - Hard stops: balance floor 75.00 uBTC, 3-loss streak, 10 uBTC give-back.
+- Hard stops: balance floor 0.30 uBTC (reset 2026-09-19 micro bankroll after withdrawal, was 3.00), 3-loss streak, 10 uBTC give-back.
 
 This script never executes a round. It writes recovery config files on a
 RECOVERY verdict (unless --dry-run) and prints the command to run.
@@ -16,7 +16,7 @@ RECOVERY verdict (unless --dry-run) and prints the command to run.
 import argparse
 import json
 import sys
-from decimal import Decimal as D
+from decimal import Decimal as D, ROUND_DOWN
 from pathlib import Path
 
 LADDER = ["plan1", "glacier", "paroli"]
@@ -35,9 +35,10 @@ GLACIER_LIVE = "live_s12_glacier.jsonl"
 PAROLI_LIVE = "live_paroli.jsonl"
 
 UBTC = D("1000000")
-FLOOR_UBTC = D("75.00")
+FLOOR_UBTC = D("0.30")
 DRAWDOWN_LIMIT_BTC = D("0.00003000")      # 30.0 uBTC session give-back
 RECOVERY_PROFIT_CAP = D("0.00000200")     # 2.0 uBTC single-config recovery cap
+MIN_STAKE_BTC = D("0.00000005")           # 0.05 uBTC: smallest stake in live use (s13 micro)
 
 
 def parse_args():
@@ -45,6 +46,8 @@ def parse_args():
         description="Loss switch-up protocol: decide and print the next round command.")
     p.add_argument("--dry-run", action="store_true",
                    help="compute and print everything, write no config files")
+    p.add_argument("--ignore-floor", action="store_true",
+                   help="bypass the balance floor check temporarily")
     p.add_argument("--ledger", default="session_ledger.json",
                    help="ledger path (default: session_ledger.json)")
     p.add_argument("--balance", default=None, metavar="UBTC",
@@ -72,9 +75,31 @@ def row_net(row):
         return None
 
 
+def is_settled(row):
+    """True when a ledger row records a round that actually placed bets.
+
+    A 0-round 0-net row is a non-round artifact: an operator RESET marker, or a
+    runner attempt that aborted before any wager. Such rows must not reset the
+    loss streak or advance the round counter. A 0-round row with a non-zero net
+    (e.g. a partial killed mid-round) still counts - the balance moved.
+    """
+    if not isinstance(row, dict):
+        return True
+    try:
+        rounds = int(row.get("rounds", 1) or 0)
+    except (TypeError, ValueError):
+        return True
+    if rounds != 0:
+        return True
+    net = row_net(row)
+    return net is None or net != 0
+
+
 def last_round(rows):
-    """Last row with a numeric n -> (n, net). (None, None) when none."""
+    """Last settled row with a numeric n -> (n, net). (None, None) when none."""
     for row in reversed(rows):
+        if not is_settled(row):
+            continue
         n = row.get("n") if isinstance(row, dict) else None
         if isinstance(n, (int, float)) and not isinstance(n, bool):
             return int(n), row_net(row)
@@ -82,9 +107,15 @@ def last_round(rows):
 
 
 def loss_streak(rows):
-    """Count of trailing rows (any n) with net < 0."""
+    """Count of trailing settled rows with net < 0.
+
+    Unsettled artifacts (0 rounds AND 0 net) are skipped: an unfunded attempt
+    must not reset the streak it never played.
+    """
     k = 0
     for row in reversed(rows):
+        if not is_settled(row):
+            continue
         net = row_net(row)
         if net is None or net >= 0:
             break
@@ -93,10 +124,16 @@ def loss_streak(rows):
 
 
 def session_drawdown(rows):
-    """Running max of cumulative net minus current cumulative net (BTC)."""
+    """Running max of cumulative net minus current cumulative net (BTC).
+
+    Unsettled artifacts are skipped; a 0-round row with a recorded net still
+    counts, because the balance moved.
+    """
     cum = D(0)
     peak = D(0)
     for row in rows:
+        if not is_settled(row):
+            continue
         net = row_net(row)
         if net is None:
             continue
@@ -175,58 +212,154 @@ def fetch_balance_ubtc(balance_arg):
         return None
 
 
-def recovery_updates(family, streak, abs_loss):
-    """{config_filename: {key: value}} recovery spec for the family."""
-    base = "0.00000025" if streak == 2 else "0.00000050"
+def btc_str(value):
+    """Plain (never scientific) BTC decimal string."""
+    return f"{value:f}"
+
+
+def config_requirements(name):
+    """(entry_ubtc, max_loss_ubtc) a config needs, or None when unreadable."""
+    try:
+        cfg = json.loads(Path(name).read_text())
+    except Exception:
+        return None
+    entry = (D(str(cfg.get("base_stake", "0")))
+             + D(str(cfg.get("buffer", "0.00000100"))))
+    return entry * UBTC, D(str(cfg.get("max_loss", "0"))) * UBTC
+
+
+def family_fitness(family, balance_ubtc):
+    """(ok, reason): is this family funded AND floor-safe at this balance?
+
+    A verdict must never name a command the runner's own preflight will refuse,
+    nor one whose loss cap would carry the balance through FLOOR_UBTC.
+
+    Exposure is not the max: plan1 runs its 11 configs sequentially, each with
+    its own cap (round_flow.py:184-185), so its worst case is the SUM of the
+    per-config max_loss values. Entry is the largest single stake, because the
+    slots run one at a time.
+    """
+    if balance_ubtc is None:
+        return True, "balance unavailable - funding not verified"
+    names = PLAN1_CONFIGS if family == "plan1" else [FAMILY_CONFIGS[family]]
+    entry = D(0)
+    exposure = D(0)
+    for name in names:
+        req = config_requirements(name)
+        if req is None:
+            return False, f"missing/unreadable config {name}"
+        entry = max(entry, req[0])
+        exposure += req[1]
+    if balance_ubtc < entry:
+        return False, f"entry {entry:.2f} uBTC > balance {balance_ubtc:.2f} uBTC"
+    if balance_ubtc - exposure < FLOOR_UBTC:
+        return False, (f"worst case {exposure:.2f} uBTC over {len(names)} slot(s) "
+                       f"would breach floor {FLOOR_UBTC:.2f} "
+                       f"(lands at {balance_ubtc - exposure:.2f})")
+    return True, (f"entry {entry:.2f} uBTC, worst case "
+                  f"{balance_ubtc - exposure:.2f} uBTC")
+
+
+def clamp_stake(name, cfg, base_btc, loss_btc, balance_ubtc, count=1):
+    """Scale a stake/loss pair down to what the bankroll can actually carry.
+
+    Preserves the config's own loss:stake ratio (its strategy shape) and never
+    drops the stake below MIN_STAKE_BTC. `count` is how many configs share the
+    balance concurrently in the same family batch (11 for plan1, 1 otherwise),
+    so the family's aggregate exposure - count x max_loss - fits the headroom.
+    Returns ({updates}, None), or (None, reason) when the family cannot be run
+    fundably and floor-safely.
+    """
+    if balance_ubtc is None:
+        return None, f"{name}: balance unavailable - funding not verified"
+    cur_base = D(str(cfg.get("base_stake", "0")))
+    cur_loss = D(str(cfg.get("max_loss", "0")))
+    if cur_base <= 0 or cur_loss <= 0:
+        return None, f"{name}: base_stake/max_loss missing"
+    ratio = cur_loss / cur_base                     # the ladder's shape
+    headroom = balance_ubtc - FLOOR_UBTC
+    if headroom <= 0:
+        return None, f"{name}: floor breached (headroom {headroom:.2f} uBTC)"
+    budget = headroom / count                       # this config's share
+    loss_ubtc = min(max(loss_btc, base_btc) * UBTC, budget)
+    base = (loss_ubtc / ratio / UBTC).quantize(D("0.00000001"),
+                                               rounding=ROUND_DOWN)
+    if base < MIN_STAKE_BTC:
+        return None, (f"{name}: stake would fall to {base * UBTC:.3f} uBTC, below "
+                      f"MIN_STAKE {MIN_STAKE_BTC * UBTC:.2f} uBTC "
+                      f"(headroom {headroom:.2f} uBTC over {count} slot(s))")
+    buffer = D(str(cfg.get("buffer", "0.00000100")))
+    if balance_ubtc < (base + buffer) * UBTC:
+        return None, (f"{name}: entry {(base + buffer) * UBTC:.2f} uBTC > "
+                      f"balance {balance_ubtc:.2f} uBTC")
+    loss_out = (base * ratio).quantize(D("0.00000001"), rounding=ROUND_DOWN)
+    return {"base_stake": btc_str(base), "max_loss": btc_str(loss_out)}, None
+
+
+def recovery_updates(family, streak, abs_loss, balance_ubtc=None):
+    """({config_filename: {key: value}}, None) recovery spec, or (None, reason).
+
+    Every stake/loss pair is clamped to the bankroll: the entry must be
+    affordable and max_loss must fit inside the floor headroom. A family whose
+    stake would have to fall below MIN_STAKE_BTC is not viable and must not be
+    recommended.
+    """
+    base = D("0.00000025") if streak == 2 else D("0.00000050")
+    loss = D("0.00000150")
+    profit = str(min(abs_loss, RECOVERY_PROFIT_CAP))
     if family == "glacier":
-        return {"s12_glacier.json": {
-            "base_stake": base,
-            "target": 9800,
-            "side": "UNDER",
-            "max_loss": "0.00000150",
-            "max_profit": str(min(abs_loss, RECOVERY_PROFIT_CAP)),
-            "max_rounds": 40,
+        raw = {"s12_glacier.json": {
+            "base_stake": base, "target": 9800, "side": "UNDER",
+            "max_loss": loss, "max_profit": profit, "max_rounds": 40,
         }}
-    if family == "paroli":
-        return {"paroli.json": {
-            "base_stake": base,
-            "factor": 2,
-            "bank_after": 3,
-            "max_stake": "0.00000200",
-            "target": 5000,
-            "side": "UNDER",
-            "max_loss": "0.00000150",
-            "max_profit": str(min(abs_loss, RECOVERY_PROFIT_CAP)),
-            "max_rounds": 15,
+    elif family == "paroli":
+        raw = {"paroli.json": {
+            "base_stake": base, "factor": 2, "bank_after": 3,
+            "max_stake": "0.00000200", "target": 5000, "side": "UNDER",
+            "max_loss": loss, "max_profit": profit, "max_rounds": 15,
         }}
-    if family == "plan1":
-        upd = {
-            "base_stake": base,
-            "max_loss": "0.00000150",
-            "max_profit": "0.00000150",
-            "max_rounds": 15,
-        }
-        return {name: dict(upd) for name in PLAN1_CONFIGS}
-    return {}
+    elif family == "plan1":
+        upd = {"base_stake": base, "max_loss": loss,
+               "max_profit": loss, "max_rounds": 15}
+        raw = {name: dict(upd) for name in PLAN1_CONFIGS}
+    else:
+        return None, f"unknown family {family!r}"
+
+    specs = {}
+    slots = len(raw)
+    for name, updates in raw.items():
+        path = Path(name)
+        if not path.exists():
+            return None, f"missing config {name}"
+        cfg = json.loads(path.read_text())
+        clamped, why = clamp_stake(name, cfg, D(str(updates["base_stake"])),
+                                   D(str(updates["max_loss"])), balance_ubtc,
+                                   count=slots)
+        if clamped is None:
+            # Fail closed: clamping only some slots would leave the rest at the
+            # old cap, so the batch's aggregate exposure would still breach.
+            return None, f"{why} [family needs all {slots} slot(s) clamped]"
+        merged = dict(updates)
+        merged.update(clamped)
+        specs[name] = merged
+    return specs, None
 
 
-def write_recovery_configs(family, streak, abs_loss, dry_run):
-    """Write recovery specs (update listed keys only). Exit 1 if missing."""
-    specs = recovery_updates(family, streak, abs_loss)
-    missing = [name for name in specs if not Path(name).exists()]
-    if missing:
-        print(f"error: missing config file(s) for {family} recovery: "
-              + ", ".join(missing))
-        sys.exit(1)
+def write_recovery_configs(family, streak, abs_loss, dry_run, balance_ubtc=None):
+    """Write clamped recovery specs. Returns (names, None) or ([], reason)."""
+    specs, reason = recovery_updates(family, streak, abs_loss, balance_ubtc)
+    if specs is None:
+        return [], reason
     if dry_run:
         print("  (dry-run: no files written)")
-        return
+        return list(specs), None
     for name, updates in specs.items():
         p = Path(name)
         cfg = json.loads(p.read_text())
         cfg.update(updates)
         p.write_text(json.dumps(cfg, indent=1) + "\n")
         print(f"  wrote {name} (recovery spec)")
+    return list(specs), None
 
 
 def command_for(family, next_n, mode, streak):
@@ -239,21 +372,21 @@ def command_for(family, next_n, mode, streak):
 
 def print_report(last_n, last_net, family, streak, drawdown, balance_ubtc,
                  note=None):
-    print("─── LOSS SWITCH-UP PROTOCOL ───")
+    print("--- LOSS SWITCH-UP PROTOCOL ---")
     print(f"last round:     {last_n if last_n is not None else 'n/a'}")
     if last_net is None:
         print("last net:       n/a")
     else:
-        print(f"last net:       {last_net * UBTC:+.2f} µBTC")
+        print(f"last net:       {last_net * UBTC:+.2f} uBTC")
     print(f"last family:    {family}")
     print(f"streak:         {streak}")
-    print(f"drawdown:       {drawdown * UBTC:.2f} µBTC")
+    print(f"drawdown:       {drawdown * UBTC:.2f} uBTC")
     if balance_ubtc is None:
         print("balance:        unavailable")
         print("floor headroom: unknown")
     else:
-        print(f"balance:        {balance_ubtc:.2f} µBTC")
-        print(f"floor headroom: {balance_ubtc - FLOOR_UBTC:.2f} µBTC")
+        print(f"balance:        {balance_ubtc:.2f} uBTC")
+        print(f"floor headroom: {balance_ubtc - FLOOR_UBTC:.2f} uBTC")
     if note:
         print(f"note:           {note}")
     print()
@@ -262,7 +395,11 @@ def print_report(last_n, last_net, family, streak, drawdown, balance_ubtc,
 def main():
     args = parse_args()
     rows = load_rows(Path(args.ledger))
+    unsettled = [r.get("n") for r in rows if not is_settled(r)]
     ledger_note = None if rows else "no ledger data"
+    if unsettled:
+        ledger_note = (f"{len(unsettled)} unsettled row(s) ignored: "
+                       + ", ".join(str(n) for n in unsettled))
 
     last_n, last_net = last_round(rows)
     streak = loss_streak(rows)
@@ -274,23 +411,48 @@ def main():
     print_report(last_n, last_net, family, streak, drawdown, balance_ubtc,
                  note=ledger_note)
 
-    # Verdict table - evaluated in order, first match wins.
-    if balance_ubtc is not None and balance_ubtc < FLOOR_UBTC:
+    # Verdict table - evaluated in order, first match wins. A verdict must never
+    # name a command the runner will refuse, nor one whose loss cap would carry
+    # the balance through FLOOR_UBTC.
+    if balance_ubtc is not None and balance_ubtc < FLOOR_UBTC and not args.ignore_floor:
         print("VERDICT: HALT (floor breach)")
     elif streak >= 3:
         print("VERDICT: HALT (three consecutive losses)")
     elif drawdown >= DRAWDOWN_LIMIT_BTC:
         print("VERDICT: HALT (session give-back limit)")
     elif last_net is not None and last_net < 0:
-        next_family = LADDER[(LADDER.index(family) + 1) % len(LADDER)]
-        print(f"VERDICT: RECOVERY {next_family}")
-        write_recovery_configs(next_family, streak, abs(last_net),
-                               args.dry_run)
-        print(f"  {command_for(next_family, next_n, 'recovery', streak)}")
+        start = LADDER.index(family) + 1
+        order = LADDER[start:] + LADDER[:start]
+        skipped, chosen = [], None
+        for fam in order:
+            specs, reason = recovery_updates(fam, streak, abs(last_net),
+                                             balance_ubtc)
+            if specs is not None:
+                chosen = fam
+                break
+            skipped.append(f"{fam}: {reason}")
+        if chosen is None:
+            print("VERDICT: HALT (no fundable floor-safe family)")
+            for line in skipped:
+                print(f"  skip {line}")
+        else:
+            print(f"VERDICT: RECOVERY {chosen}")
+            write_recovery_configs(chosen, streak, abs(last_net), args.dry_run,
+                                   balance_ubtc)
+            print(f"  {command_for(chosen, next_n, 'recovery', streak)}")
     else:
-        print("VERDICT: STANDARD")
-        for i, fam in enumerate(LADDER, 1):
-            print(f"  [{i}] {command_for(fam, next_n, 'standard', streak)}")
+        fits = [(fam, family_fitness(fam, balance_ubtc)) for fam in LADDER]
+        if not any(ok for _, (ok, _) in fits):
+            print("VERDICT: HALT (no fundable floor-safe family)")
+            for fam, (_, reason) in fits:
+                print(f"  skip {fam}: {reason}")
+        else:
+            print("VERDICT: STANDARD")
+            for i, (fam, (ok, reason)) in enumerate(fits, 1):
+                if ok:
+                    print(f"  [{i}] {command_for(fam, next_n, 'standard', streak)}")
+                else:
+                    print(f"  [{i}] skip {fam}: {reason}")
 
 
 if __name__ == "__main__":

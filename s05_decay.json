@@ -12,5 +12,6 @@
  "max_loss": "0.00000150",
  "max_profit": "0.00000150",
  "max_rounds": 15,
- "description": "s05_decay: Plan 1 symmetrical quick-take (0.50u base, +/-1.5u caps) - R35 top-performer rerun"
+ "description": "s05_decay: Plan 1 symmetrical quick-take (0.50u base, +/-1.5u caps) - R35 top-performer rerun",
+ "buffer": "0.00000005"
 }

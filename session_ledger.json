@@ -423,9 +423,33 @@
    "net": "-2.34026000000003E-8",
    "rounds": 40,
    "note": "R69 plan1 standard streak=0"
+  },
+  {
+   "n": 70,
+   "net": "2.9234540817E-8",
+   "rounds": 3,
+   "note": "R70 glacier recovery streak=1"
+  },
+  {
+   "n": 71,
+   "net": "2.4954995E-7",
+   "rounds": 1,
+   "note": "R71 paroli standard streak=0"
+  },
+  {
+   "n": 72,
+   "net": "-5E-7",
+   "rounds": 1,
+   "note": "R72 plan1 standard streak=0"
+  },
+  {
+   "n": 73,
+   "net": "1.07193316318E-7",
+   "rounds": 22,
+   "note": "R73 glacier recovery streak=1 (22W/0L)"
   }
  ],
- "session_total": "0.0000458900921535889945350",
+ "session_total": "0.0000457760699607239945350",
  "session_total_source": "sum_of_round_nets",
  "baseline_2026-09-18": {
   "note": "manual deposit + manual play outside the bot (user-reported); bot ledger excludes manual activity",

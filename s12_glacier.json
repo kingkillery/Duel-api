@@ -1,12 +1,13 @@
 {
  "mode": "flat",
  "type": "flat",
- "base_stake": "0.00000050",
+ "base_stake": "0.00000025",
  "currency_id": 101,
  "target": 9800,
  "side": "UNDER",
  "max_loss": "0.00000150",
- "max_profit": "2.34026000000003E-8",
+ "max_profit": "5E-7",
  "max_rounds": 40,
+ "buffer": "0.00000005",
  "description": "s12_glacier: variance-minimal exposure grind - 98% win chance (UNDER 9800, 1.0194x), flat 0.50u, +/-1.5u caps, 40 rounds. First extreme-target round; tests extreme-tier payout + zero-edge-rakeback wager accounting."
 }

@@ -10,5 +10,6 @@
  "max_loss": "0.00000150",
  "max_profit": "1.19950969379E-7",
  "max_rounds": 15,
+ "buffer": "0.00000005",
  "description": "Plan 4 paroli sprint: 0.5u base, 0.5u/1u/2u press, bank after 3 wins (+3.5u target, -3.0u stop, 15 rds)"
 }

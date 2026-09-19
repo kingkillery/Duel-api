@@ -4,8 +4,8 @@
  "cum_net_source": "session_ledger.json session_total after R38",
  "last_round": 38,
  "balance_after_R38_uBTC": 142.917144557705,
- "floor_uBTC": 75.0,
- "gate": "GREEN (+67.92 uBTC above floor)",
+ "floor_uBTC": 0.3,
+ "gate": "GREEN (+0.30 uBTC above floor; floor reset 2026-09-19 micro bankroll 0.60u live, was 3.00)",
  "R38_plan1_batch": {
   "bets": 41,
   "wins": 18,

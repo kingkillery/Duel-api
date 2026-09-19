@@ -325,8 +325,8 @@ def cmd_autobet(args: argparse.Namespace) -> int:
         else:
             balance = Decimal(str(balance_info))
 
-        # Safety: abort if balance < stake + buffer
-        buffer = Decimal("0.00000100")
+        # Safety: abort if balance < stake + buffer (buffer override lives in config for micro bankrolls)
+        buffer = Decimal(str(config.get("buffer", "0.00000100")))
         if balance < stake + buffer:
             print(f"balance {balance} below stake {stake} + buffer {buffer}", file=sys.stderr)
             return 1
