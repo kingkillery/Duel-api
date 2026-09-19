@@ -1,28 +1,36 @@
-# Publish release artifacts to a Cloudflare R2 hosted package index.
+# Publish release artifacts to a Hugging Face repo ("bucket") folder.
 #
-# Why R2 and not PyPI or a home server: R2 is object storage with no egress
-# fees and no server to maintain; nothing here touches the home network.
-# The bucket serves a static PEP 503 index, so users can
-# `pip install --extra-index-url https://<public-host>/simple/ duel-api`.
+# Why HF instead of R2/PyPI: the maintainer already has a bucket there, so
+# there is no new account, no new server, and nothing touches the home
+# network — GitHub CI uploads with a scoped token, users download from HF.
+# Users install with pip's --find-links against a static index page:
+#   pip install --find-links \
+#     https://huggingface.co/datasets/<user>/<bucket>/resolve/main/<prefix>/simple/duel-api/index.html \
+#     duel-api
 #
-# One-time setup (maintainer, ~10 minutes, all in Cloudflare dashboard):
-#   1. Cloudflare dashboard → R2 Object Storage → Create bucket (any name,
-#      e.g. `duel-api-dl`). No public access needed at the API level.
-#   2. Bucket → Settings → Public access: either "Allow Access" via the
-#      r2.dev subdomain (fastest) or add a Custom Domain you own
-#      (recommended: stable, brandable, permanent). Note the public URL.
-#   3. R2 → Manage API tokens → Create token with "Object Read & Write"
-#      scoped to just this bucket. Save the Access Key ID + Secret.
-#   4. GitHub repo → Settings → Secrets and variables → Actions → add:
-#        R2_ACCOUNT_ID ........ 32-hex-char account ID (dashboard URL)
-#        R2_ACCESS_KEY_ID ..... token access key
-#        R2_SECRET_ACCESS_KEY . token secret
-#        R2_BUCKET_NAME ....... bucket name from step 1
+# ISOLATION CONTRACT (the guarantee): every path this workflow writes is
+# asserted to start with <prefix>/ (default: duel-api-index). Uploads are
+# additive only — individual upload_file calls, never sync --delete, never
+# touching anything outside the prefix. Existing bucket content, settings,
+# and other folders are read never, written never. The .whl/.tar.gz/.html
+# files are inert to the dataset viewer. Visible footprint, stated openly:
+# one folder plus additive commit history in the bucket repo.
 #
-# After that: pushing a v* tag runs tests + smoke, uploads the new sdist
-# and wheel under dist/ (old versions are kept, never deleted), and
-# regenerates simple/duel-api/index.html from the full bucket listing.
-# The index uses relative links, so it works under any public base URL.
+# One-time setup (maintainer):
+#   1. Pick the bucket repo, e.g. <user>/<bucket> (dataset or model).
+#   2. Hugging Face → Settings → Access Tokens → create a FINE-GRAINED
+#      token scoped to ONLY that repo with Write permission. (Classic
+#      `write` tokens also work but grant more than needed.)
+#   3. GitHub repo → Settings → Secrets and variables → Actions → add:
+#        HF_TOKEN ....... the token from step 2 (never paste it in chat/logs)
+#        HF_REPO ........ e.g. <user>/<bucket>
+#        HF_REPO_TYPE ... dataset (default) or model
+#        HF_PREFIX ...... duel-api-index (default; single folder scope)
+#      Or locally: gh secret set HF_TOKEN --repo kingkillery/Duel-api
+#   4. Push a v* tag. The workflow runs the full suite + smoke, uploads the
+#      new sdist/wheel under <prefix>/dist/, and regenerates
+#      <prefix>/simple/duel-api/index.html from the full remote listing
+#      (old versions stay installable).
 
 name: Hosted index
 
@@ -49,19 +57,17 @@ jobs:
             exit 1
           fi
 
-      - name: Check R2 secrets present
+      - name: Check HF secrets present
         run: |
-          for s in R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET_NAME; do
+          for s in HF_TOKEN HF_REPO; do
             if [ -z "${!s}" ]; then
               echo "Missing secret $s — see docs/hosted-downloads.md" >&2
               exit 1
             fi
           done
         env:
-          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_REPO: ${{ secrets.HF_REPO }}
 
       - uses: actions/setup-python@v5
         with:
@@ -86,24 +92,65 @@ jobs:
 
       - name: Build distributions
         run: |
-          python -m pip install --upgrade build
+          python -m pip install --upgrade build huggingface_hub
           python -m build
 
-      - name: Upload to R2 and rebuild index
+      - name: Upload to bucket and rebuild index
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          R2_ENDPOINT: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET_NAME }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_REPO: ${{ secrets.HF_REPO }}
+          HF_REPO_TYPE: ${{ secrets.HF_REPO_TYPE }}
+          HF_PREFIX: ${{ secrets.HF_PREFIX }}
         run: |
-          EP="https://${R2_ENDPOINT}.r2.cloudflarestorage.com"
-          aws --endpoint-url "$EP" s3 sync dist/ "s3://${R2_BUCKET}/dist/" --no-progress
-          aws --endpoint-url "$EP" s3api list-objects-v2 \
-            --bucket "$R2_BUCKET" --prefix dist/ --output text \
-            --query 'Contents[].Key' > /tmp/dist_list.txt
-          python tools/build_simple_index.py duel-api < /tmp/dist_list.txt > /tmp/index.html
-          aws --endpoint-url "$EP" s3 cp /tmp/index.html \
-            "s3://${R2_BUCKET}/simple/duel-api/index.html" \
-            --content-type text/html --no-progress
-          echo "Index now lists $(grep -c '<a href' /tmp/index.html) files."
+          python - <<'EOF'
+          import glob
+          import os
+          import subprocess
+
+          from huggingface_hub import HfApi
+
+          repo_id = os.environ["HF_REPO"]
+          repo_type = os.environ.get("HF_REPO_TYPE") or "dataset"
+          prefix = os.environ.get("HF_PREFIX") or "duel-api-index"
+          assert prefix and "/" not in prefix.strip("/"), f"bad prefix {prefix!r}"
+          prefix = prefix.strip("/")
+
+          def scoped(path):
+              assert path.startswith(prefix + "/"), f"refusing out-of-scope path {path!r}"
+              return path
+
+          api = HfApi()
+          dist_paths = sorted(glob.glob("dist/*"))
+          assert dist_paths, "nothing built"
+          for local in dist_paths:
+              name = os.path.basename(local)
+              assert name.endswith((".whl", ".tar.gz", ".zip")), f"refusing {name!r}"
+              api.upload_file(
+                  path_or_fileobj=local,
+                  path_in_repo=scoped(f"{prefix}/dist/{name}"),
+                  repo_id=repo_id,
+                  repo_type=repo_type,
+              )
+              print("uploaded", name)
+
+          remote = api.list_repo_files(repo_id=repo_id, repo_type=repo_type)
+          listing = "\n".join(
+              f.rsplit("/", 1)[-1] for f in remote if f.startswith(prefix + "/dist/")
+          )
+          index = subprocess.run(
+              ["python", "tools/build_simple_index.py", "duel-api"],
+              input=listing,
+              capture_output=True,
+              text=True,
+              check=True,
+          ).stdout
+          with open("/tmp/index.html", "w", encoding="utf-8") as fh:
+              fh.write(index)
+          api.upload_file(
+              path_or_fileobj="/tmp/index.html",
+              path_in_repo=scoped(f"{prefix}/simple/duel-api/index.html"),
+              repo_id=repo_id,
+              repo_type=repo_type,
+          )
+          print("index rebuilt over", len(listing.split()), "remote files")
+          EOF
