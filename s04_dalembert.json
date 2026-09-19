@@ -1,0 +1,13 @@
+{
+  "mode": "dalembert",
+  "type": "dalembert",
+  "base_stake": "0.00000100",
+  "unit": "0.00000010",
+  "currency_id": 101,
+  "target": 5000,
+  "side": "UNDER",
+  "max_loss": "0.00000500",
+  "max_profit": "0.00001000",
+  "max_rounds": 30,
+  "description": "s04_dalembert: plus/minus one unit after loss/win"
+}

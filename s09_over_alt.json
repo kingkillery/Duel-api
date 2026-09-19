@@ -1,0 +1,21 @@
+{
+  "mode": "custom_steps",
+  "type": "custom_steps",
+  "base_stake": "0.00000100",
+  "currency_id": 101,
+  "target": 5300,
+  "side": "OVER",
+  "custom_steps": [
+    1.0,
+    1.04,
+    0.96,
+    1.08,
+    0.92,
+    1.02,
+    0.98
+  ],
+  "max_loss": "0.00000500",
+  "max_profit": "0.00001000",
+  "max_rounds": 30,
+  "description": "s09_over_alt: OVER 53.00 counterpart to under-alt"
+}

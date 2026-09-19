@@ -1,0 +1,23 @@
+{
+  "mode": "custom_steps",
+  "type": "custom_steps",
+  "base_stake": "0.00000100",
+  "currency_id": 101,
+  "target": 5000,
+  "side": "UNDER",
+  "custom_steps": [
+    1.0,
+    1.01,
+    0.99,
+    1.02,
+    0.98,
+    1.015,
+    0.985,
+    1.005,
+    0.995
+  ],
+  "max_loss": "0.00000500",
+  "max_profit": "0.00001000",
+  "max_rounds": 50,
+  "description": "s10_small_steps: multipliers clustered tightly around 1.0"
+}

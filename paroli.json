@@ -1,14 +1,14 @@
 {
-  "type": "paroli",
-  "base_stake": "0.00000100",
-  "factor": 2,
-  "bank_after": 3,
-  "max_stake": "0.00000400",
-  "currency_id": 101,
-  "target": 5000,
-  "side": "UNDER",
-  "max_loss": "0.00001000",
-  "max_profit": "0.00002000",
-  "max_rounds": 25,
-  "description": "Anti-Martingale ride-the-gain: 1u/2u/4u progression on wins, reset on any loss or after banking a 3-win streak. A failed progression nets -1u; a completed sweep banks ~+7u."
+ "type": "paroli",
+ "base_stake": "0.00000025",
+ "factor": 2,
+ "bank_after": 3,
+ "max_stake": "0.00000200",
+ "currency_id": 101,
+ "target": 5000,
+ "side": "UNDER",
+ "max_loss": "0.00000150",
+ "max_profit": "1.19950969379E-7",
+ "max_rounds": 15,
+ "description": "Plan 4 paroli sprint: 0.5u base, 0.5u/1u/2u press, bank after 3 wins (+3.5u target, -3.0u stop, 15 rds)"
 }

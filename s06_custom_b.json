@@ -1,0 +1,23 @@
+{
+  "mode": "custom_steps",
+  "type": "custom_steps",
+  "base_stake": "0.00000100",
+  "currency_id": 101,
+  "target": 5100,
+  "side": "UNDER",
+  "custom_steps": [
+    1.0,
+    1.05,
+    0.95,
+    1.12,
+    0.88,
+    1.07,
+    0.93,
+    1.03,
+    0.97
+  ],
+  "max_loss": "0.00000500",
+  "max_profit": "0.00001000",
+  "max_rounds": 35,
+  "description": "s06_custom_b: modest oscillating multipliers, target 51.00 UNDER"
+}

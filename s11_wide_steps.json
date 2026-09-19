@@ -1,0 +1,22 @@
+{
+  "mode": "custom_steps",
+  "type": "custom_steps",
+  "base_stake": "0.00000100",
+  "currency_id": 101,
+  "target": 5000,
+  "side": "UNDER",
+  "custom_steps": [
+    1.0,
+    2.0,
+    0.5,
+    1.5,
+    0.75,
+    1.25,
+    0.6,
+    1.8
+  ],
+  "max_loss": "0.00000500",
+  "max_profit": "0.00001000",
+  "max_rounds": 20,
+  "description": "s11_wide_steps: wide multipliers 0.5-2.0, short live cap"
+}

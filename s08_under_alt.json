@@ -1,0 +1,21 @@
+{
+  "mode": "custom_steps",
+  "type": "custom_steps",
+  "base_stake": "0.00000100",
+  "currency_id": 101,
+  "target": 4700,
+  "side": "UNDER",
+  "custom_steps": [
+    1.0,
+    0.97,
+    1.03,
+    0.95,
+    1.05,
+    0.99,
+    1.01
+  ],
+  "max_loss": "0.00000500",
+  "max_profit": "0.00001000",
+  "max_rounds": 30,
+  "description": "s08_under_alt: UNDER 47.00 with tight steps around 1.0"
+}

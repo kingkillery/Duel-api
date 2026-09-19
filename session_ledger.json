@@ -1,0 +1,440 @@
+{
+ "goal_btc": "0.0001",
+ "rounds": [
+  {
+   "n": 1,
+   "net": "-0.00000656",
+   "rounds": 60,
+   "note": "manual flow, s09 422 bug found"
+  },
+  {
+   "n": 2,
+   "net": "0.00002949",
+   "rounds": 105,
+   "note": "best round"
+  },
+  {
+   "n": 3,
+   "net": "-0.00001251",
+   "rounds": 75
+  },
+  {
+   "n": 4,
+   "net": "0.00000983",
+   "rounds": 103,
+   "note": "first parent-driven round"
+  },
+  {
+   "n": 5,
+   "net": "-0.00001120",
+   "rounds": 80
+  },
+  {
+   "n": 6,
+   "net": "0.00000442",
+   "rounds": 113
+  },
+  {
+   "n": 7,
+   "net": "0.00000678",
+   "rounds": 97,
+   "note": "goal loop"
+  },
+  {
+   "n": 8,
+   "net": "0.00000205",
+   "rounds": 87
+  },
+  {
+   "n": 9,
+   "net": "-0.00000918",
+   "rounds": 63
+  },
+  {
+   "n": 10,
+   "net": "0.00000603",
+   "rounds": 88
+  },
+  {
+   "n": 11,
+   "net": "0.00000747",
+   "rounds": 27
+  },
+  {
+   "n": 12,
+   "net": "0.00000292",
+   "rounds": 89
+  },
+  {
+   "n": 13,
+   "net": "0.00000078",
+   "rounds": 0,
+   "note": "partial, killed by harness clamp mid-round"
+  },
+  {
+   "n": "P1",
+   "net": "-0.00000102",
+   "rounds": 13,
+   "note": "paroli run1 - exposed won-field bug | net corrected 2026-09-18: hand entry was 10x off (file: live_paroli.jsonl)"
+  },
+  {
+   "n": "P2",
+   "net": "-0.00000102",
+   "rounds": 16,
+   "note": "paroli run2 - exposed session-ahead bug | net corrected 2026-09-18: hand entry was 10x off (file: live_paroli2.jsonl)"
+  },
+  {
+   "n": "P3",
+   "net": "-0.00000601",
+   "rounds": 9,
+   "note": "paroli run3 - pure mechanics verified"
+  },
+  {
+   "n": 14,
+   "net": "-0.00000517",
+   "rounds": 86
+  },
+  {
+   "n": 15,
+   "net": "0.00002070",
+   "rounds": 108,
+   "note": "8/10 positive; ledger file created"
+  },
+  {
+   "n": 16,
+   "net": "-0.000016469451716",
+   "rounds": 74
+  },
+  {
+   "n": 17,
+   "net": "0.000011865362820",
+   "rounds": 118
+  },
+  {
+   "n": 18,
+   "net": "0.000013202536728",
+   "rounds": 110
+  },
+  {
+   "n": 19,
+   "net": "-0.000003946283808",
+   "rounds": 93
+  },
+  {
+   "n": 20,
+   "net": "-0.0000014326747400000007",
+   "rounds": 114,
+   "note": "token retired mid-batch; s08-s11 completed on retry"
+  },
+  {
+   "n": 21,
+   "net": "0.0000165050747879999996",
+   "rounds": 118
+  },
+  {
+   "n": 22,
+   "net": "-0.000009073682408000000355",
+   "rounds": 85
+  },
+  {
+   "n": 23,
+   "net": "0.000002292096011999999463",
+   "rounds": 91
+  },
+  {
+   "n": 24,
+   "net": "-0.0000223414770519999996",
+   "rounds": 84
+  },
+  {
+   "n": 25,
+   "net": "0.0000154467491959999982",
+   "rounds": 104
+  },
+  {
+   "n": 26,
+   "net": "-0.000001694978996000000482",
+   "rounds": 112
+  },
+  {
+   "n": 27,
+   "net": "0.00001675987243200000044",
+   "rounds": 105,
+   "note": "token retired mid-batch; retried s06_ramp.json,s07_antiramp.json,s08_burst.json,s09_original.json,s10_slowspike.json,s11_bookend.json"
+  },
+  {
+   "n": "CL1",
+   "net": "-0.0000000900100",
+   "rounds": 100,
+   "note": "clearing probe: 100u wagered at 1u flat; +41.91u converted to cashoutable (42u locked -> 0); rollover R <= 2.4x; all 0.00049836 BTC now cashoutable"
+  },
+  {
+   "n": 28,
+   "net": "-0.000003971809756000000541",
+   "rounds": 96
+  },
+  {
+   "n": 29,
+   "net": "-0.000012456940103999999742",
+   "rounds": 83
+  },
+  {
+   "n": 30,
+   "net": "-0.00000789484298199999976",
+   "rounds": 84
+  },
+  {
+   "n": 31,
+   "net": "0.000003414455162",
+   "rounds": 40,
+   "note": "Plan 1 low-target battery; ledger re-corrected 2026-09-18: raw archive (round31_archive, 40 bets, zero duplicate timestamps vs R30) proves +3.4145 uBTC; prior -3.36 entry was a mis-correction"
+  },
+  {
+   "n": 32,
+   "net": "-0.00000227665185000000015",
+   "rounds": 32
+  },
+  {
+   "n": 33,
+   "net": "-2.546716299999998E-7",
+   "rounds": 53
+  },
+  {
+   "n": 34,
+   "net": "-0.0000015027003",
+   "rounds": 5,
+   "note": "paroli low-target sprint, 5 rds 2W/3L; ledger corrected 2026-09-18: automation_cli.py --out APPENDS, so 13 stale rows from the 20:46 paroli exploration were re-counted (phantom -1.0162 uBTC)"
+  },
+  {
+   "n": 35,
+   "net": "0.0000036653552619999995795",
+   "rounds": 36
+  },
+  {
+   "n": 36,
+   "net": "7.256973000000001E-7",
+   "rounds": 41
+  },
+  {
+   "n": 37,
+   "net": "3.89793877560E-7",
+   "rounds": 40,
+   "note": "s12_glacier single (low-target sprint)"
+  },
+  {
+   "n": 38,
+   "net": "-0.0000030411343480000000410",
+   "rounds": 41
+  },
+  {
+   "n": 39,
+   "net": "3.89793877560E-7",
+   "rounds": 40,
+   "note": "R39 glacier recovery streak=1"
+  },
+  {
+   "n": 40,
+   "net": "0.0000027916288480000000795",
+   "rounds": 46,
+   "note": "R40 plan1 standard streak=0"
+  },
+  {
+   "n": 41,
+   "net": "0.0000019435010559999997195",
+   "rounds": 42,
+   "note": "R41 plan1 standard streak=0"
+  },
+  {
+   "n": 42,
+   "net": "0.0000062602786979999997795",
+   "rounds": 41,
+   "note": "R42 plan1 standard streak=0"
+  },
+  {
+   "n": 43,
+   "net": "0.0000032833750419999999",
+   "rounds": 41,
+   "note": "R43 plan1 standard streak=0"
+  },
+  {
+   "n": 44,
+   "net": "0.0000095066782979999996795",
+   "rounds": 43,
+   "note": "R44 plan1 standard streak=0"
+  },
+  {
+   "n": 45,
+   "net": "0.0000052638790980000002",
+   "rounds": 39,
+   "note": "R45 plan1 standard streak=0"
+  },
+  {
+   "n": 46,
+   "net": "-0.0000027875339480000003",
+   "rounds": 35,
+   "note": "R46 plan1 standard streak=0"
+  },
+  {
+   "n": 47,
+   "net": "-2.36889132647E-7",
+   "rounds": 28,
+   "note": "R47 glacier recovery streak=1"
+  },
+  {
+   "n": 48,
+   "net": "-2.5045005E-7",
+   "rounds": 3,
+   "note": "R48 paroli recovery streak=2"
+  },
+  {
+   "n": "RESET",
+   "net": "0",
+   "rounds": 0,
+   "note": "operator reset after streak-3 halt; resume toward 100 uBTC from R49"
+  },
+  {
+   "n": 49,
+   "net": "-6.51487940000000410E-8",
+   "rounds": 43,
+   "note": "R49 plan1 recovery streak=0"
+  },
+  {
+   "n": 50,
+   "net": "6.8213928573E-8",
+   "rounds": 7,
+   "note": "R50 glacier recovery streak=1"
+  },
+  {
+   "n": 51,
+   "net": "-0.0000042620164459999999205",
+   "rounds": 44,
+   "note": "R51 plan1 standard streak=0"
+  },
+  {
+   "n": 52,
+   "net": "-6.29695816318E-7",
+   "rounds": 40,
+   "note": "R52 glacier recovery streak=1"
+  },
+  {
+   "n": 53,
+   "net": "-0.00000100090010",
+   "rounds": 6,
+   "note": "R53 paroli recovery streak=2"
+  },
+  {
+   "n": "RESET",
+   "net": "0",
+   "rounds": 0,
+   "note": "operator reset after streak-3 halt; resume toward 100 uBTC from R54"
+  },
+  {
+   "n": 54,
+   "net": "0.0000014353012559999998495",
+   "rounds": 40,
+   "note": "R54 plan1 recovery streak=0"
+  },
+  {
+   "n": 55,
+   "net": "0.00000120751550199999964",
+   "rounds": 37,
+   "note": "R55 plan1 standard streak=0"
+  },
+  {
+   "n": 56,
+   "net": "-0.0000037588660959999997205",
+   "rounds": 40,
+   "note": "R56 plan1 standard streak=0"
+  },
+  {
+   "n": 57,
+   "net": "3.89793877560E-7",
+   "rounds": 40,
+   "note": "R57 glacier recovery streak=1"
+  },
+  {
+   "n": 58,
+   "net": "-0.0000012656168460000002205",
+   "rounds": 47,
+   "note": "R58 plan1 standard streak=0"
+  },
+  {
+   "n": 59,
+   "net": "3.89793877560E-7",
+   "rounds": 40,
+   "note": "R59 glacier recovery streak=1"
+  },
+  {
+   "n": 60,
+   "net": "-0.0000077044736079999999",
+   "rounds": 37,
+   "note": "R60 plan1 standard streak=0"
+  },
+  {
+   "n": 61,
+   "net": "3.89793877560E-7",
+   "rounds": 40,
+   "note": "R61 glacier recovery streak=1"
+  },
+  {
+   "n": 62,
+   "net": "-0.0000030810443380000002205",
+   "rounds": 42,
+   "note": "R62 plan1 standard streak=0"
+  },
+  {
+   "n": 63,
+   "net": "3.89793877560E-7",
+   "rounds": 40,
+   "note": "R63 glacier recovery streak=1"
+  },
+  {
+   "n": 64,
+   "net": "0.0000065270743420000003",
+   "rounds": 45,
+   "note": "R64 plan1 standard streak=0"
+  },
+  {
+   "n": 65,
+   "net": "-0.0000057597661959999999805",
+   "rounds": 43,
+   "note": "R65 plan1 standard streak=0"
+  },
+  {
+   "n": 66,
+   "net": "-1.19950969379E-7",
+   "rounds": 40,
+   "note": "R66 glacier recovery streak=1"
+  },
+  {
+   "n": 67,
+   "net": "2.4954995E-7",
+   "rounds": 1,
+   "note": "R67 paroli recovery streak=2"
+  },
+  {
+   "n": 68,
+   "net": "7.301977999999997795E-7",
+   "rounds": 34,
+   "note": "R68 plan1 standard streak=0"
+  },
+  {
+   "n": 69,
+   "net": "-2.34026000000003E-8",
+   "rounds": 40,
+   "note": "R69 plan1 standard streak=0"
+  }
+ ],
+ "session_total": "0.0000458900921535889945350",
+ "session_total_source": "sum_of_round_nets",
+ "baseline_2026-09-18": {
+  "note": "manual deposit + manual play outside the bot (user-reported); bot ledger excludes manual activity",
+  "btc_balance": "0.000483096860998181",
+  "cashoutable": "0.000150796860998181",
+  "file_truth_lifetime_bot_net": "+0.0000503432",
+  "file_truth_rounds": 2174,
+  "file_truth_wagered": "0.00269882",
+  "file_truth_implied_edge_pct": -1.8654,
+  "ledger_row_sum_after_fixes": "0.000043848249819999996608"
+ }
+}

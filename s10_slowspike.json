@@ -1,6 +1,6 @@
 {
  "mode": "custom_steps",
- "base_stake": "0.00000100",
+ "base_stake": "0.00000050",
  "currency_id": 101,
  "target": 5000,
  "side": "UNDER",
@@ -12,8 +12,8 @@
   1.0,
   2.0
  ],
- "max_loss": "0.00000600",
- "max_profit": "0.00001200",
- "max_rounds": 100,
- "description": "s10_slowspike: cycle [1.0, 1.0, 1.0, 1.0, 1.0, 2.0]"
+ "max_loss": "0.00000150",
+ "max_profit": "0.00000150",
+ "max_rounds": 15,
+ "description": "s10_slowspike: Plan 1 symmetrical quick-take (0.50u base, +/-1.5u caps) - R35 top-performer rerun"
 }
