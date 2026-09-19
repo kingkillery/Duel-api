@@ -1,0 +1,109 @@
+# Publish release artifacts to a Cloudflare R2 hosted package index.
+#
+# Why R2 and not PyPI or a home server: R2 is object storage with no egress
+# fees and no server to maintain; nothing here touches the home network.
+# The bucket serves a static PEP 503 index, so users can
+# `pip install --extra-index-url https://<public-host>/simple/ duel-api`.
+#
+# One-time setup (maintainer, ~10 minutes, all in Cloudflare dashboard):
+#   1. Cloudflare dashboard → R2 Object Storage → Create bucket (any name,
+#      e.g. `duel-api-dl`). No public access needed at the API level.
+#   2. Bucket → Settings → Public access: either "Allow Access" via the
+#      r2.dev subdomain (fastest) or add a Custom Domain you own
+#      (recommended: stable, brandable, permanent). Note the public URL.
+#   3. R2 → Manage API tokens → Create token with "Object Read & Write"
+#      scoped to just this bucket. Save the Access Key ID + Secret.
+#   4. GitHub repo → Settings → Secrets and variables → Actions → add:
+#        R2_ACCOUNT_ID ........ 32-hex-char account ID (dashboard URL)
+#        R2_ACCESS_KEY_ID ..... token access key
+#        R2_SECRET_ACCESS_KEY . token secret
+#        R2_BUCKET_NAME ....... bucket name from step 1
+#
+# After that: pushing a v* tag runs tests + smoke, uploads the new sdist
+# and wheel under dist/ (old versions are kept, never deleted), and
+# regenerates simple/duel-api/index.html from the full bucket listing.
+# The index uses relative links, so it works under any public base URL.
+
+name: Hosted index
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build-test-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag matches pyproject version
+        if: github.event_name == 'push'
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VER=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "tag=$TAG pyproject=$VER"
+          if [ "$TAG" != "$VER" ]; then
+            echo "Tag v$TAG does not match pyproject version $VER" >&2
+            exit 1
+          fi
+
+      - name: Check R2 secrets present
+        run: |
+          for s in R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET_NAME; do
+            if [ -z "${!s}" ]; then
+              echo "Missing secret $s — see docs/hosted-downloads.md" >&2
+              exit 1
+            fi
+          done
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all,dev]"
+
+      - name: Full test suite
+        env:
+          PYTHONPATH: .
+        run: pytest
+
+      - name: Smoke — installed entry points work offline
+        run: |
+          pip install -e .
+          duel-api --help
+          duel-api demo --sessions 200
+          duel-api doctor
+
+      - name: Build distributions
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+
+      - name: Upload to R2 and rebuild index
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ENDPOINT: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET_NAME }}
+        run: |
+          EP="https://${R2_ENDPOINT}.r2.cloudflarestorage.com"
+          aws --endpoint-url "$EP" s3 sync dist/ "s3://${R2_BUCKET}/dist/" --no-progress
+          aws --endpoint-url "$EP" s3api list-objects-v2 \
+            --bucket "$R2_BUCKET" --prefix dist/ --output text \
+            --query 'Contents[].Key' > /tmp/dist_list.txt
+          python tools/build_simple_index.py duel-api < /tmp/dist_list.txt > /tmp/index.html
+          aws --endpoint-url "$EP" s3 cp /tmp/index.html \
+            "s3://${R2_BUCKET}/simple/duel-api/index.html" \
+            --content-type text/html --no-progress
+          echo "Index now lists $(grep -c '<a href' /tmp/index.html) files."
