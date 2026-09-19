@@ -4,6 +4,18 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); versioning follows
 [SemVer](https://semver.org/).
 
+## [0.2.1] — 2026-09-19
+
+Week-1 production batch (no runtime behavior changes).
+
+### Added
+
+- `SECURITY.md`, `CONTRIBUTING.md`, issue/PR templates.
+- `publish.yml`: PyPI Trusted Publishing on `v*` tags, TestPyPI on demand.
+- CI `smoke` job (installed entry points + offline engine) and `gitleaks`
+  secret scan.
+- `content/`: 6-week release calendar, EP02–EP05 scripts, EP02 timing starter.
+
 ## [0.2.0] — 2026-09-19
 
 Public release.
