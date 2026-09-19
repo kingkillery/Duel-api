@@ -17,6 +17,11 @@ One-line index install:
 pip install --extra-index-url https://kingkillery.github.io/Duel-api/simple/ duel-api
 ```
 
+**Verified (2026-09-19):** a clean venv ran that exact command, installed
+`duel-api==0.2.2` from the Pages index (`Looking in indexes: …/Duel-api/simple/`),
+and `duel-api doctor` printed the packaged spec. The name is not on PyPI, so
+`--extra-index-url` cannot collide with a different package of the same name.
+
 Direct wheel (pin a version by filename):
 
 ```bash
