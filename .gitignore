@@ -42,6 +42,11 @@ goal_run.py
 run_11_summary.json
 run_11_round2_summary.json
 round1_archive/
+
+# Local-only TARGET-HIT policy run outputs (offline arithmetic scratch).
+# The tool itself (target_hit_policy.py) IS tracked; its dated outputs stay local.
+target_hit_*.json
+target_hit_log.jsonl
 round2_archive/
 _accepted_*.json
 *.pid
