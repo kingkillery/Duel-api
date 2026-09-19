@@ -1,0 +1,132 @@
+[
+ [
+  "console",
+  "log",
+  "%cDo not send anyone your cookies or paste any code here. Any \"hacks\" or \"exploits\" are a SCAM! They are trying to steal all of your funds. font: 2em sans-serif; color: yellow; background-color: red;"
+ ],
+ [
+  "ws-created",
+  "",
+  "wss://roulette.duel.com/s/?uid=REDACTED&token=REDACTED"
+ ],
+ [
+  "log",
+  "warning",
+  "other: The AudioContext was not allowed to start. It must be resumed (or created) after a user gesture on the page. https://developer.chrome.com/blog/autoplay/#web_audio url=https://duel.com/assets/index-Dv4-x1go.js"
+ ],
+ [
+  "log",
+  "warning",
+  "other: The AudioContext was not allowed to start. It must be resumed (or created) after a user gesture on the page. https://developer.chrome.com/blog/autoplay/#web_audio url=https://duel.com/assets/index-Dv4-x1go.js"
+ ],
+ [
+  "log",
+  "error",
+  "other: Manifest: Line: 1, column: 1, Syntax error. url=https://duel.com/site.webmanifest"
+ ],
+ [
+  "console",
+  "warning",
+  "[Meta Pixel] - Invalid parameter format for currency. Please refer https://developers.facebook.com/docs/meta-pixel/reference/ for valid parameter spec"
+ ],
+ [
+  "loadfail",
+  "Script",
+  "net::ERR_BLOCKED_BY_ORB "
+ ],
+ [
+  "loadfail",
+  "Fetch",
+  "net::ERR_ABORTED "
+ ],
+ [
+  "ws-recv",
+  "",
+  "{\"sid\": \"VdV-twBS17D1eV3iAHbn\", \"upgrades\": [], \"pingInterval\": 45000, \"pingTimeout\": 20000, \"maxPayload\": 1000000}"
+ ],
+ [
+  "console",
+  "debug",
+  "[View] 2026-09-19T01:35:15.639Z - DEBUG - Viewer connect options values:  Proxy(Object)"
+ ],
+ [
+  "console",
+  "info",
+  "[View] 2026-09-19T01:35:15.640Z - INFO - Broadcast status:  not_established"
+ ],
+ [
+  "ws-created",
+  "",
+  "wss://live-syd-1.millicast.com/ws/v2/sub/cdc0124a82cd4d108113020ed44bda6d?token=REDACTED"
+ ],
+ [
+  "ws-sent",
+  "",
+  "{\"type\": \"cmd\", \"transId\": 0, \"name\": \"view\", \"data\": {\"sdp\": \"v=0\\r\\no=- 5639057161607603398 2 IN IP4 127.0.0.1\\r\\ns=-\\r\\nt=0 0\\r\\na=group:BUNDLE 0 1\\r\\na=extmap-allow-mixed\\r\\na=msid-semantic: WMS\\r\\nm=video 9 UDP/TLS/RTP/SAVPF 96 97 98 99 100 101 35 36 37 38 102 103 104 107 108 109 114 115 116 11"
+ ],
+ [
+  "ws-recv",
+  "",
+  "{\"type\": \"response\", \"transId\": 0, \"data\": {\"sdp\": \"v=0\\r\\no=- 1789781720834 1 IN IP4 127.0.0.1\\r\\ns=semantic-sdp\\r\\nc=IN IP4 0.0.0.0\\r\\nt=0 0\\r\\na=extmap-allow-mixed\\r\\na=ice-lite\\r\\na=msid-semantic: WMS *\\r\\na=group:BUNDLE 0 1\\r\\nm=video 9 UDP/TLS/RTP/SAVPF 96 97 98 99 100 101 35 36 37 38 102 103 "
+ ],
+ [
+  "ws-recv",
+  "",
+  "{\"type\": \"event\", \"name\": \"active\", \"data\": {\"streamId\": \"fuLULJ/myStreamName\", \"sourceId\": null, \"tracks\": [{\"trackId\": \"d5765dbb-2c32-4d0a-ade7-effc5641c9ae-0\", \"media\": \"audio\"}, {\"trackId\": \"d5765dbb-2c32-4d0a-ade7-effc5641c9ae-1\", \"media\": \"video\"}]}}"
+ ],
+ [
+  "console",
+  "info",
+  "[View] 2026-09-19T01:35:18.908Z - INFO - Connected to streamName:  myStreamName"
+ ],
+ [
+  "console",
+  "info",
+  "[View] 2026-09-19T01:36:31.126Z - INFO - Attempting to reconnect..."
+ ],
+ [
+  "console",
+  "info",
+  "[View] 2026-09-19T01:36:31.153Z - INFO - Broadcast status:  disconnected"
+ ],
+ [
+  "console",
+  "info",
+  "[View] 2026-09-19T01:36:31.154Z - INFO - Stopping"
+ ],
+ [
+  "console",
+  "debug",
+  "[View] 2026-09-19T01:36:31.180Z - DEBUG - Viewer connect options values:  Proxy(Object)"
+ ],
+ [
+  "console",
+  "info",
+  "[View] 2026-09-19T01:36:31.181Z - INFO - Broadcast status:  not_established"
+ ],
+ [
+  "ws-created",
+  "",
+  "wss://live-syd-1.millicast.com/ws/v2/sub/ba47a67ed628417cb8360d16d87a5849?token=REDACTED"
+ ],
+ [
+  "ws-sent",
+  "",
+  "{\"type\": \"cmd\", \"transId\": 0, \"name\": \"view\", \"data\": {\"sdp\": \"v=0\\r\\no=- 3505887706960715870 2 IN IP4 127.0.0.1\\r\\ns=-\\r\\nt=0 0\\r\\na=group:BUNDLE 0 1\\r\\na=extmap-allow-mixed\\r\\na=msid-semantic: WMS\\r\\nm=video 9 UDP/TLS/RTP/SAVPF 96 97 98 99 100 101 35 36 37 38 102 103 104 107 108 109 114 115 116 11"
+ ],
+ [
+  "ws-recv",
+  "",
+  "{\"type\": \"response\", \"transId\": 0, \"data\": {\"sdp\": \"v=0\\r\\no=- 1789781797751 1 IN IP4 127.0.0.1\\r\\ns=semantic-sdp\\r\\nc=IN IP4 0.0.0.0\\r\\nt=0 0\\r\\na=extmap-allow-mixed\\r\\na=ice-lite\\r\\na=msid-semantic: WMS *\\r\\na=group:BUNDLE 0 1\\r\\nm=video 9 UDP/TLS/RTP/SAVPF 96 97 98 99 100 101 35 36 37 38 102 103 "
+ ],
+ [
+  "ws-recv",
+  "",
+  "{\"type\": \"event\", \"name\": \"active\", \"data\": {\"streamId\": \"fuLULJ/myStreamName\", \"sourceId\": null, \"tracks\": [{\"trackId\": \"d5765dbb-2c32-4d0a-ade7-effc5641c9ae-0\", \"media\": \"audio\"}, {\"trackId\": \"d5765dbb-2c32-4d0a-ade7-effc5641c9ae-1\", \"media\": \"video\"}]}}"
+ ],
+ [
+  "console",
+  "info",
+  "[View] 2026-09-19T01:36:35.792Z - INFO - Connected to streamName:  myStreamName"
+ ]
+]

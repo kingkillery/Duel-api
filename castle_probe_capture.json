@@ -1,0 +1,128 @@
+[
+ {
+  "t": 1789781404.1,
+  "kind": "rest",
+  "data": {
+   "method": "POST",
+   "url": "https://bam.nr-data.net/events/1/NRJS-450186af0129d0ea365?a=1103420039&sa=1&v=1.316.0&t=Unnamed%20Transaction&rst=408170",
+   "post": "bel.7;2,1,8mbb,iu,,,'POST,5o,'h.clarity.ms:443,'/collect,1213,,,'0,!!!;5,'ajaxRequest.id,'f7f10fda-b36a-4f4c-bc68-98e0e35d01c6"
+  }
+ },
+ {
+  "t": 1789781404.1,
+  "kind": "rest",
+  "data": {
+   "method": "POST",
+   "url": "https://bam.nr-data.net/jserrors/1/NRJS-450186af0129d0ea365?a=1103420039&sa=1&v=1.316.0&t=Unnamed%20Transaction&rst=4081",
+   "post": "{\"xhr\":[{\"params\":{\"method\":\"POST\",\"hostname\":\"bam.nr-data.net\",\"port\":\"443\",\"protocol\":\"https\",\"host\":\"bam.nr-data.net:443\",\"pathname\":\"/events/1/NRJS-450186af0129d0ea365\",\"status\":200},\"metrics\":{\"count\":1,\"txSize\":{\"t\":203},\"rxSize\":{\"t\":24},\"duration\":{\"t\":403},\"cbTime\":{\"t\":0},\"time\":{\"t\":377179}}},{\"params\":{\"method\":\"POST\",\"hostname\":\"bam.nr-data.net\",\"port\":\"443\",\"protocol\":\"https\",\"host\":"
+  }
+ },
+ {
+  "t": 1789781435.1,
+  "kind": "rest",
+  "data": {
+   "method": "POST",
+   "url": "https://bam.nr-data.net/events/1/NRJS-450186af0129d0ea365?a=1103420039&sa=1&v=1.316.0&t=Unnamed%20Transaction&rst=439172",
+   "post": "bel.7;2,1,9a8k,in,,,'POST,5o,'h.clarity.ms:443,'/collect,ros,,,'0,!!!;5,'ajaxRequest.id,'4f07fb65-f5c7-4e5f-aba9-7685ee136595"
+  }
+ },
+ {
+  "t": 1789781435.1,
+  "kind": "rest",
+  "data": {
+   "method": "POST",
+   "url": "https://bam.nr-data.net/jserrors/1/NRJS-450186af0129d0ea365?a=1103420039&sa=1&v=1.316.0&t=Unnamed%20Transaction&rst=4391",
+   "post": "{\"xhr\":[{\"params\":{\"method\":\"POST\",\"hostname\":\"bam.nr-data.net\",\"port\":\"443\",\"protocol\":\"https\",\"host\":\"bam.nr-data.net:443\",\"pathname\":\"/events/1/NRJS-450186af0129d0ea365\",\"status\":200},\"metrics\":{\"count\":1,\"txSize\":{\"t\":126},\"rxSize\":{\"t\":24},\"duration\":{\"t\":421},\"cbTime\":{\"t\":0},\"time\":{\"t\":408170}}},{\"params\":{\"method\":\"POST\",\"hostname\":\"bam.nr-data.net\",\"port\":\"443\",\"protocol\":\"https\",\"host\":"
+  }
+ },
+ {
+  "t": 1789781466.09,
+  "kind": "rest",
+  "data": {
+   "method": "POST",
+   "url": "https://bam.nr-data.net/events/1/NRJS-450186af0129d0ea365?a=1103420039&sa=1&v=1.316.0&t=Unnamed%20Transaction&rst=470162",
+   "post": "bel.7;2,1,9y5d,ke,,,'POST,5o,'h.clarity.ms:443,'/collect,1b0o,,,'0,!!!;5,'ajaxRequest.id,'ebcba928-800e-48da-bb13-52eea58c14bb"
+  }
+ },
+ {
+  "t": 1789781466.09,
+  "kind": "rest",
+  "data": {
+   "method": "POST",
+   "url": "https://bam.nr-data.net/jserrors/1/NRJS-450186af0129d0ea365?a=1103420039&sa=1&v=1.316.0&t=Unnamed%20Transaction&rst=4701",
+   "post": "{\"xhr\":[{\"params\":{\"method\":\"POST\",\"hostname\":\"bam.nr-data.net\",\"port\":\"443\",\"protocol\":\"https\",\"host\":\"bam.nr-data.net:443\",\"pathname\":\"/events/1/NRJS-450186af0129d0ea365\",\"status\":200},\"metrics\":{\"count\":1,\"txSize\":{\"t\":125},\"rxSize\":{\"t\":24},\"duration\":{\"t\":414},\"cbTime\":{\"t\":0},\"time\":{\"t\":439173}}},{\"params\":{\"method\":\"POST\",\"hostname\":\"bam.nr-data.net\",\"port\":\"443\",\"protocol\":\"https\",\"host\":"
+  }
+ },
+ {
+  "t": 1789781496.13,
+  "kind": "rest",
+  "data": {
+   "method": "POST",
+   "url": "https://bam.nr-data.net/events/1/NRJS-450186af0129d0ea365?a=1103420039&sa=1&v=1.316.0&t=Unnamed%20Transaction&rst=500201",
+   "post": "bel.7;2,1,alb9,vg,,,'POST,5o,'h.clarity.ms:443,'/collect,19e3,,,'0,!!!;5,'ajaxRequest.id,'6f9b062a-44bf-41b7-967b-a658251370b1"
+  }
+ },
+ {
+  "t": 1789781496.13,
+  "kind": "rest",
+  "data": {
+   "method": "POST",
+   "url": "https://bam.nr-data.net/jserrors/1/NRJS-450186af0129d0ea365?a=1103420039&sa=1&v=1.316.0&t=Unnamed%20Transaction&rst=5002",
+   "post": "{\"xhr\":[{\"params\":{\"method\":\"POST\",\"hostname\":\"bam.nr-data.net\",\"port\":\"443\",\"protocol\":\"https\",\"host\":\"bam.nr-data.net:443\",\"pathname\":\"/jserrors/1/NRJS-450186af0129d0ea365\",\"status\":200},\"metrics\":{\"count\":1,\"txSize\":{\"t\":854},\"rxSize\":{\"t\":24},\"duration\":{\"t\":413},\"cbTime\":{\"t\":0},\"time\":{\"t\":470165}}},{\"params\":{\"method\":\"POST\",\"hostname\":\"bam.nr-data.net\",\"port\":\"443\",\"protocol\":\"https\",\"host"
+  }
+ },
+ {
+  "t": 1789781527.45,
+  "kind": "rest",
+  "data": {
+   "method": "POST",
+   "url": "https://bam.nr-data.net/events/1/NRJS-450186af0129d0ea365?a=1103420039&sa=1&v=1.316.0&t=Unnamed%20Transaction&rst=531165",
+   "post": "bel.7;2,1,b8gm,io,,,'POST,5o,'h.clarity.ms:443,'/collect,10bq,,,'0,!!!;5,'ajaxRequest.id,'96de83f2-6ba2-45b1-8896-8515b89b06c9"
+  }
+ },
+ {
+  "t": 1789781527.45,
+  "kind": "rest",
+  "data": {
+   "method": "POST",
+   "url": "https://bam.nr-data.net/jserrors/1/NRJS-450186af0129d0ea365?a=1103420039&sa=1&v=1.316.0&t=Unnamed%20Transaction&rst=5311",
+   "post": "{\"xhr\":[{\"params\":{\"method\":\"POST\",\"hostname\":\"bam.nr-data.net\",\"port\":\"443\",\"protocol\":\"https\",\"host\":\"bam.nr-data.net:443\",\"pathname\":\"/events/1/NRJS-450186af0129d0ea365\",\"status\":200},\"metrics\":{\"count\":1,\"txSize\":{\"t\":126},\"rxSize\":{\"t\":24},\"duration\":{\"t\":411},\"cbTime\":{\"t\":0},\"time\":{\"t\":500201}}},{\"params\":{\"method\":\"POST\",\"hostname\":\"bam.nr-data.net\",\"port\":\"443\",\"protocol\":\"https\",\"host\":"
+  }
+ },
+ {
+  "t": 1789781558.1,
+  "kind": "rest",
+  "data": {
+   "method": "POST",
+   "url": "https://bam.nr-data.net/events/1/NRJS-450186af0129d0ea365?a=1103420039&sa=1&v=1.316.0&t=Unnamed%20Transaction&rst=562167",
+   "post": "bel.7;2,1,bxy5,hu,,,'POST,5o,'h.clarity.ms:443,'/collect,1kut,,,'0,!!!;5,'ajaxRequest.id,'52421704-f20b-4e8a-8738-7767a3ff868e"
+  }
+ },
+ {
+  "t": 1789781558.1,
+  "kind": "rest",
+  "data": {
+   "method": "POST",
+   "url": "https://bam.nr-data.net/jserrors/1/NRJS-450186af0129d0ea365?a=1103420039&sa=1&v=1.316.0&t=Unnamed%20Transaction&rst=5621",
+   "post": "{\"xhr\":[{\"params\":{\"method\":\"POST\",\"hostname\":\"bam.nr-data.net\",\"port\":\"443\",\"protocol\":\"https\",\"host\":\"bam.nr-data.net:443\",\"pathname\":\"/events/1/NRJS-450186af0129d0ea365\",\"status\":200},\"metrics\":{\"count\":1,\"txSize\":{\"t\":126},\"rxSize\":{\"t\":24},\"duration\":{\"t\":458},\"cbTime\":{\"t\":0},\"time\":{\"t\":531166}}},{\"params\":{\"method\":\"POST\",\"hostname\":\"bam.nr-data.net\",\"port\":\"443\",\"protocol\":\"https\",\"host\":"
+  }
+ },
+ {
+  "t": 1789781588.14,
+  "kind": "rest",
+  "data": {
+   "method": "POST",
+   "url": "https://bam.nr-data.net/events/1/NRJS-450186af0129d0ea365?a=1103420039&sa=1&v=1.316.0&t=Unnamed%20Transaction&rst=592206",
+   "post": "bel.7;2,1,clvf,i4,,,'POST,5o,'h.clarity.ms:443,'/collect,h4g,,,'0,!!!;5,'ajaxRequest.id,'89dde9d0-f75c-4a59-aace-4f1246989746"
+  }
+ },
+ {
+  "t": 1789781588.14,
+  "kind": "rest",
+  "data": {
+   "method": "POST",
+   "url": "https://bam.nr-data.net/jserrors/1/NRJS-450186af0129d0ea365?a=1103420039&sa=1&v=1.316.0&t=Unnamed%20Transaction&rst=5922",
+   "post": "{\"xhr\":[{\"params\":{\"method\":\"POST\",\"hostname\":\"bam.nr-data.net\",\"port\":\"443\",\"protocol\":\"https\",\"host\":\"bam.nr-data.net:443\",\"pathname\":\"/jserrors/1/NRJS-450186af0129d0ea365\",\"status\":200},\"metrics\":{\"count\":1,\"txSize\":{\"t\":854},\"rxSize\":{\"t\":24},\"duration\":{\"t\":661},\"cbTime\":{\"t\":0},\"time\":{\"t\":562171}}},{\"params\":{\"method\":\"POST\",\"hostname\":\"bam.nr-data.net\",\"port\":\"443\",\"protocol\":\"https\",\"host"
+  }
+ }
+]
