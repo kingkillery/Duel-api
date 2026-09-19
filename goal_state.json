@@ -1,0 +1,18 @@
+{
+ "note": "superseded tracker from the early autobet-engine phase (rounds 7-12); authoritative tracker is session_ledger.json. refreshed 2026-09-18 after R38 Plan 1 batch.",
+ "cum_net": "0.0000356196838875599962115",
+ "cum_net_source": "session_ledger.json session_total after R38",
+ "last_round": 38,
+ "balance_after_R38_uBTC": 142.917144557705,
+ "floor_uBTC": 75.0,
+ "gate": "GREEN (+67.92 uBTC above floor)",
+ "R38_plan1_batch": {
+  "bets": 41,
+  "wins": 18,
+  "losses": 23,
+  "win_rate_pct": 43.9,
+  "wagered_uBTC": 26.5,
+  "net_uBTC": -3.0411
+ },
+ "started": "14:05:33"
+}
