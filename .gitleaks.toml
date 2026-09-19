@@ -1,0 +1,49 @@
+# Gitleaks configuration — duel-api
+#
+# Extends the default rule set with rules for the shapes this project
+# actually handles: session tokens and account ids passed in URLs,
+# Cloudflare clearance cookies, and browser-session cookies.
+#
+# Local run:  gitleaks detect --source . --log-opts="--all" --config .gitleaks.toml
+
+title = "duel-api"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "duel-session-token-in-url"
+description = "Session token passed in a URL query string"
+regex = '''[?&](?:token|session_token|access_token)=([A-Za-z0-9._\-]{16,})'''
+secretGroup = 1
+tags = ["credential", "duel"]
+
+[[rules]]
+id = "duel-account-uid"
+description = "Account id passed in a URL query string"
+regex = '''[?&]uid=(\d{5,})'''
+secretGroup = 1
+tags = ["pii", "duel"]
+
+[[rules]]
+id = "cloudflare-clearance-cookie"
+description = "Cloudflare bot-management clearance cookie"
+regex = '''cf_clearance=([A-Za-z0-9._\-]{20,})'''
+secretGroup = 1
+tags = ["credential"]
+
+[[rules]]
+id = "browser-session-cookie"
+description = "Long-lived browser session cookie value"
+regex = '''(?:do_not_share_this_with_anyone_not_even_staff|duel)=([A-Za-z0-9%._\-]{20,})'''
+secretGroup = 1
+tags = ["credential", "duel"]
+
+[allowlist]
+description = "Placeholders and synthetic test fixtures"
+regexes = [
+  '''REDACTED''',
+  '''uid=guest''',
+  '''duel=(sess123|rotated)''',
+  '''token=a%20b/c''',
+]
