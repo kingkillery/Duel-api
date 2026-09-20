@@ -103,29 +103,29 @@
       ]
     },
     "cta": {
-      "dur": 6.53,
-      "span": 6.53,
+      "dur": 6.6,
+      "span": 6.6,
       "start": 54.69,
-      "text": "Two hundred and ninety-seven tests. Zero dependencies for the engine. Inspect the math for yourself on GitHub.",
+      "text": "Three hundred thirty-one tests. Zero dependencies for the engine. Inspect the math for yourself on GitHub.",
       "cues": [
         {
           "start": 0.05,
-          "end": 1.898585,
-          "text": "Two hundred and ninety-seven tests."
+          "end": 1.992925,
+          "text": "Three hundred thirty-one tests."
         },
         {
-          "start": 1.898585,
-          "end": 4.150944,
+          "start": 1.992925,
+          "end": 4.127359,
           "text": "Zero dependencies for the engine."
         },
         {
-          "start": 4.150944,
-          "end": 6.462264,
+          "start": 4.127359,
+          "end": 6.533019,
           "text": "Inspect the math for yourself on GitHub."
         }
       ]
     }
   },
-  "_total": 61.25,
+  "_total": 61.32,
   "_gap_ms": 350
 }

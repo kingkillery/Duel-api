@@ -53,7 +53,7 @@ SEGMENTS: list[tuple[str, str]] = [
      "At every observed tier, fractional Kelly returns exactly zero. "
      "The tool's most useful feature is that it fails closed."),
     ("cta",
-     "Two hundred and ninety-seven tests. Zero dependencies for the engine. "
+     "Three hundred thirty-one tests. Zero dependencies for the engine. "
      "Inspect the math for yourself on GitHub."),
 ]
 

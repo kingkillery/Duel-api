@@ -525,17 +525,21 @@ def verdict_stream(slot: int, marks: Optional[list[tuple[int, str]]] = None) -> 
 # ---------------------------------------------------------------- Scene 5: CTA ----
 
 CTA_STATES: list[list[CardLine]] = [
-    [("297 TESTS. MIT LICENSED.", GREEN, F_BIG)],
-    [("297 TESTS. MIT LICENSED.", GREEN, F_BIG),
+    [("331 TESTS. MIT LICENSED.", GREEN, F_BIG)],
+    [("331 TESTS. MIT LICENSED.", GREEN, F_BIG),
      ("Zero network dependencies for the engine.", FG, F_MED)],
-    [("297 TESTS. MIT LICENSED.", GREEN, F_BIG),
+    [("331 TESTS. MIT LICENSED.", GREEN, F_BIG),
      ("Zero network dependencies for the engine.", FG, F_MED),
      ("", FG, F_SMALL),
-     ("uvx --from git+https://github.com/kingkillery/Duel-api duel-api doctor", BLUE, F_MED)],
-    [("297 TESTS. MIT LICENSED.", GREEN, F_BIG),
+     ("pip install --extra-index-url", BLUE, F_MED),
+     ("https://kingkillery.github.io/Duel-api/simple/", BLUE, F_SMALL),
+     ("duel-api", WHITE, F_MED)],
+    [("331 TESTS. MIT LICENSED.", GREEN, F_BIG),
      ("Zero network dependencies for the engine.", FG, F_MED),
      ("", FG, F_SMALL),
-     ("uvx --from git+https://github.com/kingkillery/Duel-api duel-api doctor", BLUE, F_MED),
+     ("pip install --extra-index-url", BLUE, F_MED),
+     ("https://kingkillery.github.io/Duel-api/simple/", BLUE, F_SMALL),
+     ("duel-api", WHITE, F_MED),
      ("", FG, F_SMALL),
      ("Inspect the math. Star the repo on GitHub.", WHITE, F_BIG)],
 ]
