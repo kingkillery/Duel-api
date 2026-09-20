@@ -57,6 +57,30 @@ jobs:
         duel-api demo --sessions 200
         duel-api doctor
 
+  fresh-install:
+    # Proves the PUBLIC install route works from a clean runner: installs
+    # duel-api from the Pages simple index with no checkout code on the
+    # import path, then runs the offline entry points. This is the exact
+    # command the launch posts tell users to run — CI runs it first.
+    # Note: tracks the latest RELEASED version, not the checkout.
+    runs-on: ubuntu-latest
+    steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.13"
+
+    - name: Install from public Pages index (no cache, no checkout)
+      run: |
+        python -m pip install --upgrade pip
+        pip install --index-url https://kingkillery.github.io/Duel-api/simple/ --no-cache-dir duel-api
+
+    - name: Doctor and offline demo from the shipped wheel
+      run: |
+        duel-api --help
+        duel-api doctor
+        duel-api demo --sessions 200
+
   gitleaks:
     # Session tokens, cookies, and account ids must never reach the repo.
     # Scans the FULL history (not just the pushed range) with this project's

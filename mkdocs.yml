@@ -1,0 +1,19 @@
+site_name: duel-api
+site_url: https://kingkillery.github.io/Duel-api/
+docs_dir: docs
+# Local-preview draft (week-6 item). Do NOT add a deploy workflow yet —
+# see docs/docs-site-scaffold.md: hosted-index.yml publishes ./public to
+# gh-pages with clean:true and would wipe a same-branch docs deploy.
+theme:
+  name: readthedocs
+nav:
+  - Home: index.md
+  - Betting gates: betting-gates.md
+  - Backtest math: backtest-math.md
+  - Why this exists: why-i-built-this.md
+  - Casino API notes: casino-api.md
+  - Drift detection: drift-detection.md
+  - Cookies and tokens: cookies-and-tokens.md
+  - Hosted downloads: hosted-downloads.md
+  - Operator Console wireframes: gui-wireframes.md
+strict: true
