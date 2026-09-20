@@ -40,10 +40,11 @@ The corrected CTA says **331 tests** and uses the public Pages install index.
 pip install --extra-index-url https://kingkillery.github.io/Duel-api/simple/ duel-api
 ```
 
-> I may earn a commission if you sign up through my link, at no extra cost
+> I may earn a commission if you sign up through my link
+> (https://duel.com/r/jumpyhitman), at no extra cost
 > to you. This tool automates play and may violate duel.com's Terms of
 > Service — your account, your risk. Nothing here is financial advice.
-> Never gamble money you cannot afford to lose.
+> Never gamble money you cannot afford to lose. Need help? 1-800-GAMBLER.
 
 ## Grok / ChatGPT still prompt
 

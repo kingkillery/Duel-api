@@ -57,7 +57,7 @@ If gambling stops being fun: **1-800-GAMBLER** (US), or search your national hel
 
 ## Disclosure (FTC)
 
-I may earn a commission if you sign up through my link, at no cost to you. The referral is a **footnote** on purpose — see `docs/why-i-built-this.md`. If the pitch ever becomes the link, the tool failed.
+I may earn a commission if you sign up through my link (https://duel.com/r/jumpyhitman), at no cost to you. The referral is a **footnote** on purpose — see `docs/why-i-built-this.md`. If the pitch ever becomes the link, the tool failed.
 
 ---
 

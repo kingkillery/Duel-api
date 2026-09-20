@@ -69,7 +69,7 @@ Nothing here is financial advice. Never gamble money you can't afford to lose.
 If gambling stops being fun: 1-800-GAMBLER
 
 **8/8**
-I may earn a commission if you sign up through my link, at no cost to you.
+I may earn a commission if you sign up through my link (https://duel.com/r/jumpyhitman), at no cost to you.
 
 The referral is a footnote on purpose (docs/why-i-built-this.md). If the pitch ever becomes the link, the tool failed.
 

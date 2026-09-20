@@ -32,10 +32,10 @@ Screenshot: the HALT card.
 
 ## Post 5 (cta)
 
-> 331 tests pin those gates. Code + math are open source (link with
-> `?utm_source=x&utm_medium=thread&utm_campaign=ep05`). I may earn a
-> commission if you sign up — costs you nothing. Never gamble what you
-> can't afford to lose.
+> 331 tests pin those gates. Code + math are open source — repo link with
+> `?utm_source=x&utm_medium=thread&utm_campaign=ep05`. I may earn a
+> commission if you sign up at https://duel.com/r/jumpyhitman — costs you
+> nothing. Never gamble what you can't afford to lose.
 
 ## Shorts cut (30 s)
 

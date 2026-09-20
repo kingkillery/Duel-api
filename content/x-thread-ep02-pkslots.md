@@ -54,6 +54,6 @@ Discussions: https://github.com/kingkillery/Duel-api/discussions/3
 
 ## 7 — disclosure (required)
 
-I may earn a commission if you sign up through my link, at no extra cost to you. This tool automates play and may violate duel.com's Terms of Service — your account, your risk.
+I may earn a commission if you sign up through my link (https://duel.com/r/jumpyhitman), at no extra cost to you. This tool automates play and may violate duel.com's Terms of Service — your account, your risk.
 
 Nothing here is financial advice. Never gamble money you can't afford to lose.

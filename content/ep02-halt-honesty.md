@@ -44,8 +44,9 @@ Visuals: card states — HALT reasons → the three gate rules → trust line.
 ## cta — 7 s
 
 > Three hundred thirty-one tests pin these gates. Inspect the math yourself
-> — link below. And if you sign up there, it supports the channel at no cost
-> to you.
+> — repo link below (UTM `?utm_source=youtube&utm_medium=video&utm_campaign=ep02`).
+> And if you sign up at https://duel.com/r/jumpyhitman, it supports the channel
+> at no cost to you — same ToS warning as the video description applies.
 
 Visuals: repo + install command (`uvx … duel-api doctor`), UTM:
 `?utm_source=youtube&utm_medium=video&utm_campaign=ep02`.

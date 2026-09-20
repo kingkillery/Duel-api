@@ -35,9 +35,10 @@ Show a HALT on camera. Say out loud: this is the feature.
 
 ## 1:20 cta — 10 s
 
-> Full walkthrough and the affiliate link are below — sign up through it
-> and the channel earns a commission at no cost to you. Next week: what a
-> real micro bankroll looks like across seventy rounds.
+> Full walkthrough below, plus the referral that supports the channel:
+> https://duel.com/r/jumpyhitman — signing up through it earns a commission
+> at no cost to you (same ToS warning as the video description). Next week:
+> what a real micro bankroll looks like across seventy rounds.
 
 UTM: `?utm_source=youtube&utm_medium=video&utm_campaign=ep04`.
 Pin the install command + ToS warning as the top comment.

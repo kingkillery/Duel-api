@@ -38,8 +38,10 @@ Visuals: Kelly row of zeros, `stake = 0` card, "fails closed" stamp.
 
 ## cta — 7 s
 
-> Run it yourself — one command, no account needed. Link below, with the
-> usual disclosure: sign up through it and you support the channel free.
+> Run it yourself — one command, no account needed. Repo link below (UTM
+> `?utm_source=youtube&utm_medium=video&utm_campaign=ep03`), with the
+> usual disclosure: sign up through https://duel.com/r/jumpyhitman and you
+> support the channel free.
 
 UTM: `?utm_source=youtube&utm_medium=video&utm_campaign=ep03`.
 Install on screen: `uvx … duel-api demo --sessions 10000`.

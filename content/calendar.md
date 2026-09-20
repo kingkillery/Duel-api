@@ -1,7 +1,8 @@
 # Content calendar — duel-api release schedule
 
 Positioning: the honest gambling tool. Every episode shows real math,
-including HALTs and $0 stakes. Affiliate link carries UTM
+including HALTs and $0 stakes. Approved referral, used verbatim everywhere:
+`https://duel.com/r/jumpyhitman` — never append UTM to it. Repo/demo links carry UTM
 (`?utm_source=<channel>&utm_medium=video&utm_campaign=<episode>`), and
 every post carries the disclosure line at the bottom of this file.
 
@@ -32,12 +33,13 @@ events (only publish wins *and* losses — the honesty is the brand).
 - [ ] Narration recorded; timing JSON measured (replace estimates)
 - [ ] Rendered: horizontal + vertical + voiced + GIF (`tools/make_demo_video.py`)
 - [ ] Watched end-to-end: numbers on screen match the script
-- [ ] Affiliate link with episode UTM; disclosure line included
+- [ ] Repo/demo links with episode UTM; referral verbatim; disclosure line included
 - [ ] Pinned comment: install command + ToS warning + responsible-gambling note
 
 ## Required disclosure (every post, verbatim or equivalent)
 
-> I may earn a commission if you sign up through my link, at no cost to
-> you. This tool automates play and may violate duel.com's Terms of
+> I may earn a commission if you sign up through my link
+> (`https://duel.com/r/jumpyhitman`), at no cost to you. This tool
+> automates play and may violate duel.com's Terms of
 > Service — your account, your risk. Nothing here is financial advice.
 > Never gamble money you can't afford to lose.
