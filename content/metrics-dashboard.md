@@ -14,6 +14,17 @@ Record week-1 values the day EP02 replies go live — that row is the baseline e
 | Referral clicks/signups | duel.com affiliate panel | | | | | | |
 | X impressions / Short views | @pkslots + YouTube analytics | | | | | | |
 
+## Pre-launch snapshot (auto-pulled 2026-09-20, pre-posting)
+
+| Metric | Value |
+|---|---|
+| Repo stars | 1 |
+| Open issues | 1 |
+| Issue #1 comments | 0 |
+| Discussion #3 replies | 0 |
+
+Week-1 baseline still gets filled on launch day (above); this snapshot proves the floor it starts from.
+
 ## UTM convention (already frozen in calendar.md)
 
 - Repo/demo links: `?utm_source=<channel>&utm_medium=video&utm_campaign=<episode>` — e.g. `?utm_source=youtube&utm_medium=video&utm_campaign=ep02`.

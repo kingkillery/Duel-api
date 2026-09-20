@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" font-family="Consolas, 'Courier New', monospace">
+  <rect width="1080" height="1920" fill="#101418"/>
+  <rect x="40" y="40" width="1000" height="1840" fill="none" stroke="#2fbf71" stroke-width="4"/>
+  <text x="540" y="300" text-anchor="middle" fill="#e8eef2" font-size="56" font-weight="bold">SIZING CHANGES</text>
+  <text x="540" y="375" text-anchor="middle" fill="#e8eef2" font-size="56" font-weight="bold">VARIANCE,</text>
+  <text x="540" y="450" text-anchor="middle" fill="#e8eef2" font-size="56" font-weight="bold">NEVER THE SIGN</text>
+  <text x="540" y="530" text-anchor="middle" fill="#8a94a0" font-size="30">duel-api EP03 &#183; 10,000 sessions &#183; seed 7</text>
+  <text x="540" y="590" text-anchor="middle" fill="#8a94a0" font-size="30">best tier edge 0.1000%</text>
+  <text x="540" y="780" text-anchor="middle" fill="#8a94a0" font-size="38">flat</text>
+  <text x="540" y="850" text-anchor="middle" fill="#ff5d5d" font-size="44" font-weight="bold">EV &#8722;0.0787</text>
+  <text x="540" y="1000" text-anchor="middle" fill="#8a94a0" font-size="38">martingale-3</text>
+  <text x="540" y="1070" text-anchor="middle" fill="#ff5d5d" font-size="44" font-weight="bold">EV &#8722;0.0338</text>
+  <text x="540" y="1220" text-anchor="middle" fill="#8a94a0" font-size="38">fibonacci-5</text>
+  <text x="540" y="1290" text-anchor="middle" fill="#ff5d5d" font-size="44" font-weight="bold">EV &#8722;0.0195</text>
+  <rect x="90" y="1400" width="900" height="200" fill="#0c2b1a" stroke="#2fbf71" stroke-width="3"/>
+  <text x="540" y="1480" text-anchor="middle" fill="#2fbf71" font-size="44" font-weight="bold">Kelly f* = &#8722;0.001000</text>
+  <text x="540" y="1545" text-anchor="middle" fill="#2fbf71" font-size="34">growth-optimal stake: zero</text>
+  <text x="540" y="1700" text-anchor="middle" fill="#8a94a0" font-size="28">BankrollPolicy fails closed</text>
+  <text x="540" y="1750" text-anchor="middle" fill="#8a94a0" font-size="28">E[net] = &#8722;edge &#215; E[total wagered]</text>
+</svg>
