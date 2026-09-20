@@ -217,18 +217,27 @@ def btc_str(value):
     return f"{value:f}"
 
 
-def config_requirements(name):
-    """(entry_ubtc, max_loss_ubtc) a config needs, or None when unreadable."""
-    try:
-        cfg = json.loads(Path(name).read_text())
-    except Exception:
-        return None
+def config_requirements(name, configs=None):
+    """(entry_ubtc, max_loss_ubtc) a config needs, or None when unreadable.
+
+    `configs` is an optional {filename: parsed dict} map; when given, no file
+    is read and a missing/non-dict entry counts as unreadable.
+    """
+    if configs is not None:
+        cfg = configs.get(name)
+        if not isinstance(cfg, dict):
+            return None
+    else:
+        try:
+            cfg = json.loads(Path(name).read_text())
+        except Exception:
+            return None
     entry = (D(str(cfg.get("base_stake", "0")))
              + D(str(cfg.get("buffer", "0.00000100"))))
     return entry * UBTC, D(str(cfg.get("max_loss", "0"))) * UBTC
 
 
-def family_fitness(family, balance_ubtc):
+def family_fitness(family, balance_ubtc, configs=None):
     """(ok, reason): is this family funded AND floor-safe at this balance?
 
     A verdict must never name a command the runner's own preflight will refuse,
@@ -245,7 +254,7 @@ def family_fitness(family, balance_ubtc):
     entry = D(0)
     exposure = D(0)
     for name in names:
-        req = config_requirements(name)
+        req = config_requirements(name, configs)
         if req is None:
             return False, f"missing/unreadable config {name}"
         entry = max(entry, req[0])
@@ -296,13 +305,15 @@ def clamp_stake(name, cfg, base_btc, loss_btc, balance_ubtc, count=1):
     return {"base_stake": btc_str(base), "max_loss": btc_str(loss_out)}, None
 
 
-def recovery_updates(family, streak, abs_loss, balance_ubtc=None):
+def recovery_updates(family, streak, abs_loss, balance_ubtc=None,
+                     configs=None):
     """({config_filename: {key: value}}, None) recovery spec, or (None, reason).
 
     Every stake/loss pair is clamped to the bankroll: the entry must be
     affordable and max_loss must fit inside the floor headroom. A family whose
     stake would have to fall below MIN_STAKE_BTC is not viable and must not be
-    recommended.
+    recommended. `configs` is an optional {filename: parsed dict} map; when
+    given, no files are read.
     """
     base = D("0.00000025") if streak == 2 else D("0.00000050")
     loss = D("0.00000150")
@@ -328,10 +339,15 @@ def recovery_updates(family, streak, abs_loss, balance_ubtc=None):
     specs = {}
     slots = len(raw)
     for name, updates in raw.items():
-        path = Path(name)
-        if not path.exists():
-            return None, f"missing config {name}"
-        cfg = json.loads(path.read_text())
+        if configs is not None:
+            cfg = configs.get(name)
+            if not isinstance(cfg, dict):
+                return None, f"missing config {name}"
+        else:
+            path = Path(name)
+            if not path.exists():
+                return None, f"missing config {name}"
+            cfg = json.loads(path.read_text())
         clamped, why = clamp_stake(name, cfg, D(str(updates["base_stake"])),
                                    D(str(updates["max_loss"])), balance_ubtc,
                                    count=slots)
@@ -345,21 +361,26 @@ def recovery_updates(family, streak, abs_loss, balance_ubtc=None):
     return specs, None
 
 
-def write_recovery_configs(family, streak, abs_loss, dry_run, balance_ubtc=None):
-    """Write clamped recovery specs. Returns (names, None) or ([], reason)."""
-    specs, reason = recovery_updates(family, streak, abs_loss, balance_ubtc)
-    if specs is None:
-        return [], reason
+def write_specs(specs, dry_run):
+    """Write a computed recovery spec map; returns the config names written."""
     if dry_run:
         print("  (dry-run: no files written)")
-        return list(specs), None
+        return list(specs)
     for name, updates in specs.items():
         p = Path(name)
         cfg = json.loads(p.read_text())
         cfg.update(updates)
         p.write_text(json.dumps(cfg, indent=1) + "\n")
         print(f"  wrote {name} (recovery spec)")
-    return list(specs), None
+    return list(specs)
+
+
+def write_recovery_configs(family, streak, abs_loss, dry_run, balance_ubtc=None):
+    """Write clamped recovery specs. Returns (names, None) or ([], reason)."""
+    specs, reason = recovery_updates(family, streak, abs_loss, balance_ubtc)
+    if specs is None:
+        return [], reason
+    return write_specs(specs, dry_run), None
 
 
 def command_for(family, next_n, mode, streak):
@@ -392,6 +413,93 @@ def print_report(last_n, last_net, family, streak, drawdown, balance_ubtc,
     print()
 
 
+def load_configs():
+    """Parse every family config once for compute_verdict().
+
+    Unreadable or non-object files are omitted so the verdict reports them as
+    missing (fail closed) instead of crashing mid-decision.
+    """
+    configs = {}
+    for name in list(PLAN1_CONFIGS) + list(FAMILY_CONFIGS.values()):
+        try:
+            cfg = json.loads(Path(name).read_text())
+        except Exception:
+            continue
+        if isinstance(cfg, dict):
+            configs[name] = cfg
+    return configs
+
+
+def compute_verdict(last_n, last_net, family, streak, drawdown, balance_ubtc,
+                    ignore_floor=False, configs=None):
+    """Pure verdict computation: the same table main() prints, as data.
+
+    No network, no file reads, no writes: `configs` supplies the parsed
+    strategy configs ({filename: dict}); a missing entry counts as an
+    unreadable config, so the verdict fails closed. Returns a dict:
+
+      verdict   "HALT" | "RECOVERY" | "STANDARD"
+      reason    HALT cause, else None
+      next_n    round number the command/specs target
+      streak    loss streak the verdict was computed with
+      family    chosen family (RECOVERY only)
+      command   exact runner command (RECOVERY, or per-option for STANDARD)
+      specs     computed recovery config updates, NOT written (RECOVERY only)
+      skipped   "family: reason" lines for a no-fundable HALT
+      options   per-family {family, ok, reason, command} for STANDARD
+    """
+    configs = {} if configs is None else configs
+    next_n = (last_n or 0) + 1
+    result = {"verdict": None, "reason": None, "next_n": next_n,
+              "streak": streak, "family": None, "command": None,
+              "specs": None, "skipped": [], "options": []}
+
+    # Verdict table - evaluated in order, first match wins. A verdict must
+    # never name a command the runner will refuse, nor one whose loss cap
+    # would carry the balance through FLOOR_UBTC.
+    if balance_ubtc is not None and balance_ubtc < FLOOR_UBTC and not ignore_floor:
+        result.update(verdict="HALT", reason="floor breach")
+    elif streak >= 3:
+        result.update(verdict="HALT", reason="three consecutive losses")
+    elif drawdown >= DRAWDOWN_LIMIT_BTC:
+        result.update(verdict="HALT", reason="session give-back limit")
+    elif last_net is not None and last_net < 0:
+        start = LADDER.index(family) + 1
+        order = LADDER[start:] + LADDER[:start]
+        skipped, chosen, chosen_specs = [], None, None
+        for fam in order:
+            specs, reason = recovery_updates(fam, streak, abs(last_net),
+                                             balance_ubtc, configs)
+            if specs is not None:
+                chosen, chosen_specs = fam, specs
+                break
+            skipped.append(f"{fam}: {reason}")
+        if chosen is None:
+            result.update(verdict="HALT",
+                          reason="no fundable floor-safe family",
+                          skipped=skipped)
+        else:
+            result.update(verdict="RECOVERY", family=chosen,
+                          specs=chosen_specs, skipped=skipped,
+                          command=command_for(chosen, next_n, "recovery",
+                                              streak))
+    else:
+        options = []
+        for fam in LADDER:
+            ok, reason = family_fitness(fam, balance_ubtc, configs)
+            options.append({"family": fam, "ok": ok, "reason": reason,
+                            "command": (command_for(fam, next_n, "standard",
+                                                    streak) if ok else None)})
+        if any(o["ok"] for o in options):
+            result.update(verdict="STANDARD", options=options)
+        else:
+            result.update(verdict="HALT",
+                          reason="no fundable floor-safe family",
+                          skipped=[f"{o['family']}: {o['reason']}"
+                                   for o in options])
+    return result
+
+
 def main():
     args = parse_args()
     rows = load_rows(Path(args.ledger))
@@ -411,48 +519,26 @@ def main():
     print_report(last_n, last_net, family, streak, drawdown, balance_ubtc,
                  note=ledger_note)
 
-    # Verdict table - evaluated in order, first match wins. A verdict must never
-    # name a command the runner will refuse, nor one whose loss cap would carry
-    # the balance through FLOOR_UBTC.
-    if balance_ubtc is not None and balance_ubtc < FLOOR_UBTC and not args.ignore_floor:
-        print("VERDICT: HALT (floor breach)")
-    elif streak >= 3:
-        print("VERDICT: HALT (three consecutive losses)")
-    elif drawdown >= DRAWDOWN_LIMIT_BTC:
-        print("VERDICT: HALT (session give-back limit)")
-    elif last_net is not None and last_net < 0:
-        start = LADDER.index(family) + 1
-        order = LADDER[start:] + LADDER[:start]
-        skipped, chosen = [], None
-        for fam in order:
-            specs, reason = recovery_updates(fam, streak, abs(last_net),
-                                             balance_ubtc)
-            if specs is not None:
-                chosen = fam
-                break
-            skipped.append(f"{fam}: {reason}")
-        if chosen is None:
-            print("VERDICT: HALT (no fundable floor-safe family)")
-            for line in skipped:
-                print(f"  skip {line}")
-        else:
-            print(f"VERDICT: RECOVERY {chosen}")
-            write_recovery_configs(chosen, streak, abs(last_net), args.dry_run,
-                                   balance_ubtc)
-            print(f"  {command_for(chosen, next_n, 'recovery', streak)}")
+    # The verdict table lives in compute_verdict(); main only renders it and
+    # performs the RECOVERY config write the computation produced.
+    result = compute_verdict(last_n, last_net, family, streak, drawdown,
+                             balance_ubtc, ignore_floor=args.ignore_floor,
+                             configs=load_configs())
+    if result["verdict"] == "HALT":
+        print(f"VERDICT: HALT ({result['reason']})")
+        for line in result["skipped"]:
+            print(f"  skip {line}")
+    elif result["verdict"] == "RECOVERY":
+        print(f"VERDICT: RECOVERY {result['family']}")
+        write_specs(result["specs"], args.dry_run)
+        print(f"  {result['command']}")
     else:
-        fits = [(fam, family_fitness(fam, balance_ubtc)) for fam in LADDER]
-        if not any(ok for _, (ok, _) in fits):
-            print("VERDICT: HALT (no fundable floor-safe family)")
-            for fam, (_, reason) in fits:
-                print(f"  skip {fam}: {reason}")
-        else:
-            print("VERDICT: STANDARD")
-            for i, (fam, (ok, reason)) in enumerate(fits, 1):
-                if ok:
-                    print(f"  [{i}] {command_for(fam, next_n, 'standard', streak)}")
-                else:
-                    print(f"  [{i}] skip {fam}: {reason}")
+        print("VERDICT: STANDARD")
+        for i, opt in enumerate(result["options"], 1):
+            if opt["ok"]:
+                print(f"  [{i}] {opt['command']}")
+            else:
+                print(f"  [{i}] skip {opt['family']}: {opt['reason']}")
 
 
 if __name__ == "__main__":
