@@ -55,6 +55,7 @@ duel-api = "automation_cli:main"
 py-modules = [
     "automation_client",
     "automation_cli",
+    "duckdice_provider",
     "audit",
     "bankroll",
     "demo",

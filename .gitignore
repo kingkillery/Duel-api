@@ -12,6 +12,9 @@ chrome-profile/
 .env.*
 credentials.json
 
+# DuckDice Bot API key (live-money credential read by duckdice_provider.py)
+.duckdice_key
+
 # Python
 __pycache__/
 *.py[cod]
@@ -34,6 +37,8 @@ autobet_live_log.jsonl
 live*.jsonl
 probe*.jsonl
 dryrun_*.jsonl
+tests/.e2e-trade-calls.jsonl
+tests/.e2e-trade-profile.json
 
 # Local round-ops scratch (one-shot repair/loop scripts, not shipped)
 complete_r20.py

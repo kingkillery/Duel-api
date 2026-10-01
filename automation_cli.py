@@ -37,9 +37,10 @@ from automation_client import (
     WriteNotAllowed,
 )
 
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from bankroll import BankrollPolicy, EdgeRefused, PlayPolicy
+from duckdice_provider import DuckDiceProvider
 import doctor
 import paths
 import theme
@@ -100,6 +101,13 @@ def _client(args: argparse.Namespace) -> DuelClient:
     except DuelError as exc:
         print(f"warning: bootstrap failed: {exc}", file=sys.stderr)
     return client
+
+
+def _betting_client(args: argparse.Namespace):
+    """Return the selected wagering provider without changing read-only Duel commands."""
+    if getattr(args, "provider", "duel") == "duckdice":
+        return DuckDiceProvider()
+    return _client(args)
 
 
 def _spec_path(args: argparse.Namespace) -> Path:
@@ -224,12 +232,61 @@ def cmd_betfeed(args: argparse.Namespace) -> int:
 from datetime import datetime, timezone
 
 
+def _provider_name(args: argparse.Namespace) -> str:
+    """Return the selected money provider, defaulting to the original Duel path."""
+    return str(getattr(args, "provider", "duel") or "duel")
+
+
+_APPROVAL_KEY = "first_run_completed"
+
+
+def _json_true(value: object) -> bool:
+    """Accept only a JSON boolean true.
+
+    ``bool("false")`` is true, so a string or number must not unlock a live run.
+    """
+    return value is True
+
+
+def _provider_approved(state: object, provider: str) -> bool:
+    """Whether this provider's own dry run has approved a live autobet.
+
+    Legacy state is a bare ``{"first_run_completed": true}`` written before
+    providers were split. That approval belongs to Duel only: a Duel dry run
+    must not unlock DuckDice, and a newer provider-specific flag must not be
+    erased by reading the old file.
+    """
+    if not isinstance(state, dict):
+        return False
+    approvals = state.get("providers")
+    if isinstance(approvals, dict) and provider in approvals:
+        return _json_true(approvals.get(provider))
+    return provider == "duel" and _json_true(state.get(_APPROVAL_KEY, False))
+
+
+def _load_autobet_state(state_file: Path, provider: str) -> dict:
+    """Load this provider's approval, with a Duel-only legacy fallback.
+
+    New runs write ``autobet_state_<provider>.json``. An older Duel dry run
+    wrote ``autobet_state.json`` beside the profile. Read that original file
+    only for Duel, and only when the new file is absent. DuckDice never
+    inherits it.
+    """
+    path = state_file
+    if not path.exists() and provider == "duel":
+        path = state_file.with_name("autobet_state.json")
+    if not path.exists():
+        return {}
+    loaded = json.loads(path.read_text())
+    return loaded if isinstance(loaded, dict) else {}
+
 def cmd_autobet(args: argparse.Namespace) -> int:
     """Automated betting session using a strategy config.
 
     AUTOMATED BETTING. Run with --dry-run first to simulate.
     Live runs require --yes and --confirm. Balance buffer enforced.
     """
+    provider = _provider_name(args)
     import backtest.autobet_strategies as autobet_strategies
 
     if not Path(args.config).exists():
@@ -244,7 +301,7 @@ def cmd_autobet(args: argparse.Namespace) -> int:
         return 1
 
     stake = Decimal(str(config.get("base_stake", "0.01")))
-    state_file = Path(args.profile).parent / "autobet_state.json"
+    state_file = Path(args.profile).parent / f"autobet_state_{provider}.json"
 
     # Dry-run is local: no session, balance fetch, or live bets.
     if args.dry_run:
@@ -297,19 +354,22 @@ def cmd_autobet(args: argparse.Namespace) -> int:
         _emit(result)
 
         state_file.parent.mkdir(parents=True, exist_ok=True)
-        state_file.write_text(json.dumps({"first_run_completed": True}))
+        state_file.write_text(json.dumps({_APPROVAL_KEY: True, "providers": {provider: True}}))
         return 0
 
-    if not Path(args.profile).exists():
+    if getattr(args, "provider", "duel") == "duel" and not Path(args.profile).exists():
         print(f"session not found: {args.profile}", file=sys.stderr)
         return 1
 
-    with _client(args) as client:
-        if state_file.exists():
-            state = json.loads(state_file.read_text())
-            if not state.get("first_run_completed", False):
-                print("First run requires --dry-run. Simulate then clear flag if satisfied.", file=sys.stderr)
-                return 1
+    with _betting_client(args) as client:
+        state = _load_autobet_state(state_file, provider)
+        if not _provider_approved(state, provider):
+            print(
+                f"First {provider} run requires --dry-run. Simulate then clear "
+                "flag if satisfied.",
+                file=sys.stderr,
+            )
+            return 1
         # Get current balance
         try:
             balance_info = client.balance_for(args.currency)
@@ -353,6 +413,7 @@ def cmd_autobet(args: argparse.Namespace) -> int:
         out_path = Path(args.out) if args.out else Path("autobet_rounds.jsonl")
         out_path.parent.mkdir(parents=True, exist_ok=True)
         last_won = False  # previous round's outcome, threaded to next_stake
+        failed = False
 
 
         while True:
@@ -392,7 +453,22 @@ def cmd_autobet(args: argparse.Namespace) -> int:
                 # look like a loss. Outcome-aware strategies (Paroli presses,
                 # Martingale resets) mis-fired on it for years of blind
                 # custom_steps runs that never noticed.
-                net = Decimal(str(result.get("data", {}).get("round", {}).get("amount_won", 0))) - current_stake
+                #
+                # The payout must be an authoritative money field, so a
+                # missing/empty/non-numeric amount is an error rather than a
+                # silent 0 payout. Defaulting it recorded an accepted wager as a
+                # loss and drove the next strategy step off a wrong outcome (see
+                # duckdice_provider._decimal_field for the same rule at source).
+                round_data = result.get("data", {}).get("round", {})
+                raw_payout = round_data.get("amount_won")
+                if raw_payout is None or str(raw_payout).strip() == "":
+                    raise ValueError("round response is missing amount_won")
+                try:
+                    net = Decimal(str(raw_payout)) - current_stake
+                except InvalidOperation as exc:
+                    raise ValueError(
+                        f"round response has a non-numeric amount_won: {raw_payout!r}"
+                    ) from exc
                 won = net > 0
 
                 total_profit += net if net > 0 else Decimal(0)
@@ -419,8 +495,10 @@ def cmd_autobet(args: argparse.Namespace) -> int:
                 break
             except Exception as e:
                 print(f"bet failed: {e}", file=sys.stderr)
+                # A wager may already have been accepted. Do not retry, do not
+                # record a successful round, and do not report the run as clean.
+                failed = True
                 break
-
         result = {
             "mode": "live",
             "rounds_played": rounds_played,
@@ -428,9 +506,10 @@ def cmd_autobet(args: argparse.Namespace) -> int:
             "total_profit": str(total_profit),
             "net": str(total_profit - total_loss),
             "output": str(out_path),
+            "failed": failed,
         }
         _emit(result)
-        return 0
+        return 1 if failed else 0
 
 
 def cmd_dice_bet(args: argparse.Namespace) -> int:
@@ -448,14 +527,15 @@ def cmd_dice_bet(args: argparse.Namespace) -> int:
     --max-stake.
     """
     token = args.security_token or None
-    if args.live and token is None:
+    provider = getattr(args, "provider", "duel")
+    if args.live and provider == "duel" and token is None:
         raise argparse.ArgumentError(
             None,
             "Live dice bet requires --security-token (obtain from the page's network request).",
         )
     try:
         if not args.live:
-            with _client(args) as client:
+            with _betting_client(args) as client:
                 result = client.place_dice_bet(
                     args.amount,
                     side=args.side,
@@ -481,16 +561,20 @@ def cmd_dice_bet(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
+        auth_note = (
+            " and --security-token were supplied"
+            if provider == "duel"
+            else "; DuckDice authenticates with DUCKDICE_API_KEY"
+        )
         print(
-            "REAL-MONEY dice bet: automated wagering almost certainly violates the "
-            "operator's terms and can lose funds fast. Proceeding only because "
-            "--yes, --enable-betting, --live, --confirm-bet and --security-token "
-            "were all supplied.",
+            "REAL-MONEY dice bet: automated wagering can lose funds fast. Proceeding "
+            "only because --yes, --enable-betting, --live and --confirm-bet were supplied"
+            + auth_note + ".",
             file=sys.stderr,
         )
-        with _client(args) as client:
+        with _betting_client(args) as client:
             client.betting_enabled = bool(args.enable_betting)
-            client.max_stake = args.max_stake
+            client.max_stake = Decimal(str(args.max_stake))
             policy = edge = None
             if args.edge_guard and args.entertainment:
                 raise ValueError(
@@ -783,7 +867,13 @@ def build_parser() -> argparse.ArgumentParser:
             "require --yes, and the money commands are gated further still."
         ),
     )
-    parser.add_argument("--profile", default=str(DEFAULT_PROFILE), help="session profile path")
+    parser.add_argument("--profile", default=str(DEFAULT_PROFILE), help="Duel session profile path")
+    parser.add_argument(
+        "--provider",
+        choices=("duel", "duckdice"),
+        default="duel",
+        help="dice/autobet provider (default: duel)",
+    )
     parser.add_argument("--spec", default=None, help="path to site_spec.json (default: the packaged copy)")
     parser.add_argument(
         "--yes",
@@ -848,14 +938,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--target", required=True, help="roll target x100 as an integer string")
     p.add_argument("--out", help="output path for rounds JSONL")
     p.add_argument("--confirm", action="store_true", help="confirm live autobet (requires --yes)")
-    p.add_argument("--security-token", default=None, help="one-time betting token (required by the site for live bets)")
+    p.add_argument("--security-token", default=None, help="Duel-only one-time betting token")
     p.set_defaults(func=cmd_autobet)
 
     p = sub.add_parser(
         "dice-bet",
         help=(
-            "place one dice bet (REAL MONEY; dry-run by default; --live needs "
-            "--confirm-bet and --security-token)"
+            "place one dice bet (dry-run by default; live calls are provider-gated)"
         ),
     )
     p.add_argument("--amount", required=True, help="stake as a decimal string, e.g. 0.5")
@@ -865,7 +954,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--security-token",
         type=str,
-        help="Security token required for live bets (generated by the Duel web page)",
+        help="Duel-only security token required for live Duel bets",
     )
     p.add_argument("--max-stake", type=float, default=1.0, help="client-side per-bet cap in the bet currency")
     p.add_argument("--enable-betting", action="store_true", help="opt this client into real-money betting")
