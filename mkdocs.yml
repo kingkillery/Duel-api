@@ -9,7 +9,7 @@ theme:
 nav:
   - Home: index.md
   - Betting gates: betting-gates.md
-  - Backtest math: backtest-math.md
+  - Local trade desk: local-trade.md
   - Why this exists: why-i-built-this.md
   - Casino API notes: casino-api.md
   - Drift detection: drift-detection.md

@@ -9,8 +9,8 @@ pip install --extra-index-url https://kingkillery.github.io/Duel-api/simple/ due
 ```
 
 - [Betting gates](betting-gates.md) — the money gates and protocol verdict rules.
+- [Local trade desk](local-trade.md) — localhost-only manual wager page; live mode is a server flag.
 - [Backtest math](backtest-math.md) — why sizing changes variance, never the sign.
-- [Why this exists](why-i-built-this.md) — the honesty-first design notes.
 - [Start here](https://github.com/kingkillery/Duel-api/issues/1) — onboarding on GitHub.
 
 Automated play may violate duel.com's Terms of Service — your account, your risk. Nothing here is financial advice. Never gamble money you can't afford to lose. Need help? 1-800-GAMBLER.

@@ -15,6 +15,11 @@ A live bet requires all of:
 
 Plus a `--security-token` minted by a real browser bet. Omit any one and nothing is sent.
 
+On the Duel path that is the whole gate. The `--provider duckdice` path keeps all
+four flags but drops the `--security-token` requirement, since it authenticates with
+its Bot API key instead of a browser-minted bet-body token — see
+[duckdice.md](duckdice.md).
+
 ---
 
 ## 2. `autobet` Gates

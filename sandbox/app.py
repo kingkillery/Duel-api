@@ -1,7 +1,9 @@
 """FastAPI wrapper around the offline demo engine.
 
-One endpoint, one page. ``sessions`` is capped so a hosted instance cannot be
-used as a CPU firehose, and every input is clamped rather than trusted.
+``sessions`` is capped so a hosted instance cannot be used as a CPU firehose, and
+every input is clamped rather than trusted. This process does not construct a
+wagering provider. Manual wagers live in the separate localhost desk,
+``sandbox.trade``.
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ class SimulateRequest(BaseModel):
 @app.get("/", include_in_schema=False)
 def index() -> FileResponse:
     return FileResponse(STATIC / "index.html")
+
 
 
 @app.post("/api/simulate")

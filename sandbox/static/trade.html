@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>local trade desk</title>
+<style>
+  body {
+    background:#fff; color:#222;
+    font:15px/1.5 system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+    max-width:40rem; margin:2rem auto; padding:0 1rem;
+  }
+  h1 { font-size:1.05rem; font-weight:600; margin:0 0 .25rem; }
+  p.sub, .note { color:#555; font-size:.9rem; }
+  fieldset { border:1px solid #ccc; padding:1rem; margin:0 0 1rem; }
+  legend { padding:0 .35rem; color:#555; }
+  .row { display:flex; gap:1rem; flex-wrap:wrap; margin-bottom:.75rem; }
+  label { display:flex; flex-direction:column; gap:.2rem; font-size:.85rem; color:#444; }
+  input, select { font:inherit; padding:.3rem .4rem; border:1px solid #bbb; background:#fff; color:#222; }
+  input[type=text], input[type=password] { width:14rem; }
+  button { font:inherit; padding:.4rem 1rem; border:1px solid #888; background:#f2f2f2; color:#222; cursor:pointer; }
+  button:disabled { color:#888; cursor:default; }
+  pre { white-space:pre-wrap; background:#f7f7f7; border:1px solid #ddd; padding:.75rem; }
+  .bad { color:#a00; }
+  .ok { color:#060; }
+</style>
+</head>
+<body>
+<h1>local trade desk</h1>
+<p class="sub">One manual wager at a time, sent only if this server was started with
+live mode. This page does not roll locally and does not store a key.</p>
+
+<form id="desk">
+  <fieldset>
+    <legend>wager</legend>
+    <div class="row">
+      <label>provider
+        <select id="provider" name="provider">
+          <option value="duel" selected>duel</option>
+          <option value="duckdice">duckdice</option>
+        </select>
+      </label>
+      <label>currency
+        <input id="currency" name="currency" type="text" value="BTC" autocomplete="off" required>
+      </label>
+      <label>stake
+        <input id="amount" name="amount" type="text" value="0.00000050" autocomplete="off" required>
+      </label>
+    </div>
+    <div class="row">
+      <label>target (x100)
+        <input id="target" name="target" type="text" value="4900" inputmode="numeric" required>
+      </label>
+      <label>side
+        <select id="side" name="side">
+          <option value="UNDER" selected>under</option>
+          <option value="OVER">over</option>
+        </select>
+      </label>
+    </div>
+    <label>
+      <span><input id="confirm" name="confirm" type="checkbox"> I confirm this one real wager</span>
+    </label>
+    <p><button id="bet" type="submit">Bet</button>
+      <button id="refresh" type="button">Refresh status</button></p>
+  </fieldset>
+</form>
+
+<fieldset>
+  <legend>status</legend>
+  <p id="status" class="note">status not loaded</p>
+</fieldset>
+
+<fieldset>
+  <legend>result</legend>
+  <pre id="result">no wager sent</pre>
+</fieldset>
+
+<p class="note">Automated play may violate the operator's terms. If gambling stops
+being fun: 1-800-GAMBLER (US), or your national helpline.</p>
+
+<script>
+const provider = document.getElementById("provider");
+const currency = document.getElementById("currency");
+const amount = document.getElementById("amount");
+const target = document.getElementById("target");
+const side = document.getElementById("side");
+const confirmBox = document.getElementById("confirm");
+const bet = document.getElementById("bet");
+const refresh = document.getElementById("refresh");
+const statusEl = document.getElementById("status");
+const resultEl = document.getElementById("result");
+const form = document.getElementById("desk");
+
+let sending = false;
+let uncertain = false;
+
+
+function nonce() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function readJson(response) {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch (_err) {
+    return { ok: false, code: "ambiguous", error: "server returned a non-JSON body; not retried" };
+  }
+}
+
+function renderStatus(body) {
+  const row = body.status || {};
+  const lines = [
+    "provider: " + (row.provider || provider.value),
+    "live: " + (row.live_enabled ? "enabled on the server" : "disabled"),
+    "max stake: " + (row.max_stake || "unknown"),
+    "credentials: " + (row.provider === "duel" ? row.profile_label : row.key_state),
+    row.provider === "duel" ? "security token: " + (row.token_state || "missing") : "",
+    row.blocked ? "Blocked: reconcile the previous wager at the provider before restarting." : "",
+    "balance: " + (row.balance == null ? row.balance_state : row.balance + " " + (row.currency || "")),
+    row.advice || ""
+  ];
+  statusEl.textContent = lines.filter(Boolean).join("\n");
+  statusEl.className = row.live_enabled ? "note ok" : "note";
+  if (row.blocked) uncertain = true;
+  bet.disabled = sending || uncertain;
+}
+
+async function loadStatus() {
+  statusEl.textContent = "loading status…";
+  const response = await fetch("/api/status", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider: provider.value, currency: currency.value })
+  });
+  const body = await readJson(response);
+  if (!body.ok) {
+    statusEl.textContent = body.error || "status failed";
+    statusEl.className = "note bad";
+    return;
+  }
+  renderStatus(body);
+}
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (sending || uncertain) return;
+  sending = true;
+  bet.disabled = true;
+  resultEl.textContent = "sending one wager…";
+  resultEl.className = "";
+  const payload = {
+    provider: provider.value,
+    currency: currency.value,
+    amount: amount.value,
+    target: target.value,
+    side: side.value,
+    confirm: confirmBox.checked,
+    client_nonce: nonce()
+  };
+  confirmBox.checked = false;
+  try {
+    const response = await fetch("/api/bet", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const body = await readJson(response);
+    if (!body.ok) {
+      if (["ambiguous", "blocked"].includes(body.code)) uncertain = true;
+      resultEl.textContent = (body.code ? body.code + ": " : "") + (body.error || "bet refused");
+      resultEl.className = "bad";
+      return;
+    }
+    resultEl.textContent = JSON.stringify(body.result, null, 2);
+    resultEl.className = "ok";
+    confirmBox.checked = false;
+  } catch (err) {
+    uncertain = true;
+    resultEl.textContent = "ambiguous: " + err + ". Not retried.";
+    resultEl.className = "bad";
+  } finally {
+    sending = false;
+    bet.disabled = uncertain;
+    loadStatus().catch((err) => {
+      statusEl.textContent = "status refresh failed: " + err;
+      statusEl.className = "note bad";
+    });
+  }
+});
+
+function refreshStatus() {
+  loadStatus().catch(() => { statusEl.textContent = "Status unavailable; no wager was sent by this refresh."; });
+}
+provider.addEventListener("change", refreshStatus);
+currency.addEventListener("change", refreshStatus);
+refresh.addEventListener("click", refreshStatus);
+loadStatus().catch((err) => {
+  statusEl.textContent = "status failed: " + err;
+  statusEl.className = "note bad";
+});
+</script>
+</body>
+</html>

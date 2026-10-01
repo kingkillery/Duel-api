@@ -261,9 +261,10 @@ class DuelClient:
         transport: httpx.BaseTransport | None = None,
         allow_writes: bool = False,
         betting_enabled: bool = False,
-        max_stake: float = DEFAULT_MAX_STAKE,
+        max_stake: float | Decimal = DEFAULT_MAX_STAKE,
         auto_refresh: bool = True,
         max_429_retries: int = DEFAULT_MAX_429_RETRIES,
+        follow_redirects: bool = True,
         sleep: Callable[[float], None] | None = None,
     ) -> None:
         # State-changing calls are opt-in. Read-only is the default posture.
@@ -289,7 +290,7 @@ class DuelClient:
             base_url=ORIGIN,
             timeout=timeout,
             transport=transport,
-            follow_redirects=True,
+            follow_redirects=follow_redirects,
             headers={
                 "User-Agent": USER_AGENT,
                 "Accept": "application/json, text/plain, */*",
