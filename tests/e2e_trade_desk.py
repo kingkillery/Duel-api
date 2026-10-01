@@ -35,7 +35,10 @@ def drive(page, url, log, screenshot):
     page.route("**/*", lambda route: route.continue_() if route.request.url.startswith(url) else route.abort())
     page.goto(url, wait_until="networkidle")
     expect(page.locator("#status")).to_contain_text("live: disabled")
-    assert records(log) == [], "Disabled mode performed provider I/O"
+    expect(page.locator("#live_signal")).to_have_class("signal red")
+    expect(page.locator("#live_signal")).to_contain_text("LIVE MODE OFF")
+    expect(page.locator("#gate_signal")).to_contain_text("NOT READY")
+    assert all(row.get("path") == "/api/v2/metadata/exchange-rates" for row in records(log)), "Disabled mode performed non-public provider I/O"
     assert page.locator("#security_token").count() == 0
 
     def api(path, body):
@@ -61,11 +64,14 @@ def drive(page, url, log, screenshot):
         expect(page.locator("#result")).not_to_have_text("sending one wager…")
         return result
 
-    page.locator("#confirm").check()
+    expect(page.locator("#minimum")).to_contain_text("0.00007080 SOL")
+    page.locator("#use_minimum").click()
+    expect(page.locator("#amount")).to_have_value("0.01")
+    expect(page.locator("#minimum")).to_contain_text("$0.01 USD")
     assert click()["code"] == "live-disabled"
     assert not bets(log)
     configure(live=True)
-    assert click()["code"] == "confirm"
+    assert request(confirm=False)["body"]["code"] == "confirm"
     assert request(confirm="true")["status"] == 422
     configure(token=False)
     assert request()["body"]["code"] == "token"
@@ -73,11 +79,49 @@ def drive(page, url, log, screenshot):
     assert request()["body"]["code"] == "credentials-missing"
     configure(profile=True, cap=False)
     assert request()["body"]["code"] == "config"
+    page.locator("#refresh").click()
+    expect(page.locator("#live_signal")).to_have_class("signal green")
+    expect(page.locator("#live_signal")).to_contain_text("LIVE MODE ON")
+    expect(page.locator("#gate_signal")).to_have_class("signal red")
+    expect(page.locator("#gate_signal")).to_contain_text("maximum stake not configured")
     configure(cap=True)
     for invalid in ["NaN", "Infinity", "0", "-1", "1.00000000000000000001"]:
         assert request(amount=invalid)["body"]["code"] == "invalid"
     assert request(security_token="not-accepted-from-browser")["body"]["code"] == "token"
     assert not bets(log)
+    status = api("/api/status", {"provider": "duel", "currency": "SOL"})
+    assert status["body"]["status"]["min_stake"] == "0.00007080"
+    before = len(bets(log))
+    low = request(currency="SOL", amount="0.00007079")
+    assert low["body"]["code"] == "below-minimum"
+    assert len(bets(log)) == before
+    for provider_name in ("duel", "duckdice"):
+        for value in ("0.00999999", "0.009", "0.001"):
+            assert request(provider=provider_name, currency="SOL", amount=value, amount_unit="usd")["body"]["code"] == "below-minimum"
+        assert request(provider=provider_name, currency="SOL", amount="141.26", amount_unit="usd")["body"]["code"] == "invalid"
+    assert len(bets(log)) == before
+    duck_low = request(provider="duckdice", currency="LTC", amount="0.00009999")
+    assert duck_low["body"]["code"] == "below-minimum"
+    assert len(bets(log)) == before
+    configure(rates=False)
+    unavailable = request(currency="SOL", amount="0.00007080")
+    assert unavailable["body"]["code"] == "rate" and len(bets(log)) == before
+    assert request(currency="SOL", amount="0.01", amount_unit="usd")["body"]["code"] == "rate"
+    assert len(bets(log)) == before
+    configure(rates=True)
+    configure(cap_value="0.00007079")
+    priced_conflict = api("/api/status", {"provider": "duel", "currency": "SOL"})
+    assert priced_conflict["body"]["status"]["min_stake_state"] == "config"
+    assert priced_conflict["body"]["status"]["min_stake"] == "0.00007080"
+    configure(cap=True)
+    configure(floor="2")
+    conflict = request(currency="SOL", amount="0.00007080")
+    assert conflict["body"]["code"] == "config"
+    assert len(bets(log)) == before
+    configure(floor="")
+    page.locator("#refresh").click()
+    print("PASS priced minimum, below-minimum with zero wagers, floor above ceiling")
+
     print("PASS disabled mode, strict confirmation, token/profile/cap checks")
 
     # An external page or another local port cannot submit a wager.
@@ -90,35 +134,42 @@ def drive(page, url, log, screenshot):
     assert not bets(log)
     print("PASS cross-origin and malformed Host refusal")
 
-    page.locator("#confirm").check()
+    page.locator("#amount").fill("0.01")
     duel = click()
     assert duel["ok"] is True
     round_data = duel["result"]["data"]["round"]
-    assert DecimalString(round_data["amount_won"]) == DecimalString("0.00000100")
+    assert DecimalString(round_data["amount_won"]) == DecimalString("0.00014160")
+    assert DecimalString(duel["result"]["usd_equivalent"]["stake"]) == DecimalString("0.01000050")
+    expect(page.locator("#result")).to_contain_text("stake: ≈ $0.01 USD (0.00007080 SOL)")
+    expect(page.locator("#result")).to_contain_text("payout: ≈ $0.02 USD (0.00014160 SOL)")
     shown = page.locator("#result").inner_text()
     assert "synthetic-browser-minted-token" not in shown and "must-not-reach-browser" not in shown
-    expect(page.locator("#confirm")).not_to_be_checked()
+    expect(page.locator("#confirm")).to_have_count(0)
     wire = bets(log)[0]
-    assert wire["body"]["amount"] == "0.00000050"
-    assert wire["body"]["target"] == "4900" and wire["body"]["bet_type"] == "under"
-    assert wire["body"]["currency"] == 101 and wire["body"]["security_token_matches"]
+    assert wire["body"] == {"amount": "0.00007080", "target": "4900", "bet_type": "under", "currency": 109, "security_token_matches": True}
     print("PASS Duel browser Bet -> real adapter -> authoritative displayed result")
 
     page.locator("#provider").select_option("duckdice")
-    page.locator("#currency").fill("LTC")
-    page.locator("#amount").fill("0.20")
+    page.locator("#amount").fill("0.01")
     page.locator("#target").fill("5000")
     page.locator("#side").select_option("OVER")
-    page.locator("#confirm").check()
     duck = click()
     assert duck["ok"] and duck["result"]["data"]["round"]["hash"] == "duck-result"
     expect(page.locator("#result")).to_contain_text('"balance": "1.25"')
     wire = bets(log)[1]
-    assert wire["body"] == {"symbol": "LTC", "chance": "50.00", "isHigh": True, "amount": "0.20"}
+    assert wire["body"] == {"symbol": "SOL", "chance": "50.00", "isHigh": True, "amount": "0.00007080"}
+    assert DecimalString(duck["result"]["usd_equivalent"]["profit"]) == DecimalString("0.01000050")
+    expect(page.locator("#result")).to_contain_text("stake: ≈ $0.01 USD (0.00007080 SOL)")
+    expect(page.locator("#result")).to_contain_text("payout: ≈ $0.02 USD (0.00014160 SOL)")
+    expect(page.locator("#result")).to_contain_text("profit: ≈ $0.01 USD")
     assert wire["has_api_key"]
     assert "synthetic-e2e-key" not in page.locator("#result").inner_text()
-    expect(page.locator("#confirm")).not_to_be_checked()
-    expect(page.locator("#status")).to_contain_text("1.25 LTC")
+    expect(page.locator("#confirm")).to_have_count(0)
+    expect(page.locator("#status")).to_contain_text("1.25 SOL")
+    expect(page.locator("#status")).to_contain_text("balance: ≈ $176.56 USD")
+    expect(page.locator("#gate_signal")).to_have_class("signal green")
+    expect(page.locator("#gate_signal")).to_contain_text("STATUS CHECKS PASSED")
+    print("PASS red disabled/missing-cap and green enabled/configured status indicators")
     page.screenshot(path=str(screenshot), full_page=True)
     print("PASS DuckDice browser Bet -> real adapter -> authoritative displayed result")
 
@@ -131,9 +182,9 @@ def drive(page, url, log, screenshot):
     assert len(bets(log)) == count
 
     # Race a second request while the first real adapter is inside MockTransport.
-    page.locator("#currency").fill("SLOW")
-    page.locator("#confirm").check()
-    with page.expect_response(lambda r: r.url == url + "api/bet" and r.request.post_data_json.get("currency") == "SLOW") as slow_response:
+    configure(mode="slow")
+    page.locator("#amount").fill("0.21")
+    with page.expect_response(lambda r: r.url == url + "api/bet" and r.request.post_data_json.get("amount") == "0.21") as slow_response:
         page.locator("#bet").click()
         expect(page.locator("#bet")).to_be_disabled()
         deadline = time.monotonic() + 5
@@ -145,12 +196,12 @@ def drive(page, url, log, screenshot):
     assert slow_response.value.json()["ok"]
     expect(page.locator("#result")).to_contain_text("slow-result")
     assert len(bets(log)) == count + 1
-    expect(page.locator("#confirm")).not_to_be_checked()
+    expect(page.locator("#confirm")).to_have_count(0)
     print("PASS consumed nonces and concurrent/double-submit prevention")
 
     # Last: an ambiguous provider error must latch across new nonces and reloads.
-    page.locator("#currency").fill("ERR")
-    page.locator("#confirm").check()
+    configure(mode="error")
+    page.locator("#amount").fill("0.20")
     failed = click()
     assert failed["code"] == "ambiguous"
     assert "sensitive-fixture-error" not in json.dumps(failed)
@@ -161,11 +212,51 @@ def drive(page, url, log, screenshot):
     assert request()["body"]["code"] == "blocked"
     assert len(bets(log)) == count
     for bad_amount in ("0.77", "0.78"):
-        configure(reset=True)
+        configure(reset=True, mode="normal")
         malformed = request(amount=bad_amount)
         assert malformed["status"] == 502 and malformed["body"]["code"] == "ambiguous"
         assert request()["body"]["code"] == "blocked"
     print("PASS malformed payout and non-finite JSON result latch before response serialization")
+    configure(reset=True, cap_value="0.00007080", mode="normal")
+    exact = request(currency="SOL", amount="0.00007080")
+    assert exact["status"] == 200 and exact["body"]["ok"], exact
+    count = len(bets(log))
+    assert request(currency="SOL", amount="0.00007081")["body"]["code"] == "invalid"
+    assert len(bets(log)) == count
+    print("PASS floor equals ceiling accepts exact minimum; greater stake refused")
+    # A USD ceiling remains $1 across rates, providers, and native API requests.
+    configure(cap=False, usd_cap="1.00")
+    page.locator("#currency").fill("SOL")
+    page.reload(wait_until="networkidle")
+    page.locator("#provider").select_option("duckdice")
+    expect(page.locator("#status")).to_contain_text("max stake: $1.00 USD hard reference-rate limit")
+    expect(page.locator("#gate_signal")).to_have_class("signal green")
+    page.locator("#amount").fill("1.00")
+    capped = click()
+    assert capped["ok"], capped
+    assert DecimalString(bets(log)[-1]["body"]["amount"]) == DecimalString("0.00707964")
+    assert DecimalString(capped["result"]["usd_equivalent"]["stake"]) <= 1
+    count = len(bets(log))
+    for provider_name in ("duel", "duckdice"):
+        assert request(provider=provider_name, currency="SOL", amount="1.01", amount_unit="usd")["body"]["code"] == "invalid"
+        assert request(provider=provider_name, currency="SOL", amount="0.00707965")["body"]["code"] == "invalid"
+    assert len(bets(log)) == count
+    configure(sol_rate="0.004")  # SOL's USD reference price doubles.
+    assert request(currency="SOL", amount="0.00707964")["body"]["code"] == "invalid"
+    changed = request(currency="SOL", amount="1.00", amount_unit="usd")
+    assert changed["status"] == 200, changed
+    assert DecimalString(bets(log)[-1]["body"]["amount"]) == DecimalString("0.00353982")
+    count = len(bets(log))
+    configure(cap_value="0.001")
+    assert request(currency="SOL", amount="1.00", amount_unit="usd")["body"]["code"] == "invalid"
+    configure(cap=False, rates=False)
+    assert request(currency="SOL", amount="1.00", amount_unit="usd")["body"]["code"] == "rate"
+    configure(rates=True)
+    for invalid_cap in ("NaN", "Infinity", "0", "-1", "bad"):
+        configure(usd_cap=invalid_cap)
+        assert request(currency="SOL", amount="0.01", amount_unit="usd")["body"]["code"] == "config"
+    assert len(bets(log)) == count
+    print("PASS $1 USD cap, native bypass refusal, changed rates, tighter native cap, and fail-closed configuration")
     assert not errors, errors
     assert not any(row.get("outbound_blocked") for row in records(log)), "A path attempted external networking"
     print("PASS ambiguous-outcome latch, reload protection, secret-safe errors, zero browser errors")

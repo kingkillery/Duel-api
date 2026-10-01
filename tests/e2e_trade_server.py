@@ -45,7 +45,7 @@ PROFILE = os.environ[trade.PROFILE_ENV]
 
 
 def handler(provider: str, request: httpx.Request) -> httpx.Response:
-    expected_host = "duel.com" if provider == "duel" else "duckdice.io"
+    expected_host = "duel.com" if provider == "duel" or request.url.path.endswith("/exchange-rates") else "duckdice.io"
     assert request.url.host == expected_host
     body = json.loads(request.content) if request.content else {}
     wire = dict(body)
@@ -55,15 +55,26 @@ def handler(provider: str, request: httpx.Request) -> httpx.Response:
             "has_api_key": request.url.params.get("api_key") == "synthetic-e2e-key"})
     if request.url.path.endswith("/user"):
         return httpx.Response(200, json={"user": {"balances": [
-            {"balance_type": 101, "balance_type_name": "BTC", "balance": "1.0"}
+            {"balance_type": 101, "balance_type_name": "BTC", "balance": "1.0"},
+            {"balance_type": 109, "balance_type_name": "SOL", "balance": "1.0"}
         ]}})
     if request.url.path.endswith("/user-info"):
-        return httpx.Response(200, json={"balances": [{"currency": "LTC", "main": "1.25"}]})
+        return httpx.Response(200, json={"balances": [{"currency": "LTC", "main": "1.25"}, {"currency": "SOL", "main": "1.25"}]})
+    if request.url.path == "/api/v2/metadata/exchange-rates":
+        if os.environ.get("E2E_RATES") == "down":
+            return httpx.Response(503, json={"error": "rates-unavailable"})
+        return httpx.Response(200, json={
+            "base": "EUR",
+            "rates": {"USD": 1.13, "EUR": 1},
+            "crypto_rates": {"109": {"rate": os.environ.get("E2E_SOL_RATE", "0.008000000000000000"), "unreliable": False, "updated_at": 1},
+                             "104": {"rate": "0.011300000000000000", "unreliable": False, "updated_at": 1},
+                             "101": {"rate": "0.000014125000000000", "unreliable": False, "updated_at": 1}},
+        })
     if request.url.path not in {"/api/v2/dice/bet", "/api/dice/play"}:
         raise AssertionError("Unexpected provider route")
-    if body.get("symbol") == "ERR":
+    if os.environ.get("E2E_MODE") == "error":
         return httpx.Response(500, text="sensitive-fixture-error synthetic-e2e-key")
-    if body.get("symbol") == "SLOW":
+    if os.environ.get("E2E_MODE") == "slow":
         time.sleep(1.5)
     stake = Decimal(body["amount"])
     payout = stake * 2
@@ -74,11 +85,11 @@ def handler(provider: str, request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, content=json.dumps({"data": {"round": bad}}))
         return httpx.Response(200, json={"data": {"round": {
             "won": True, "amount_currency": str(stake), "amount_won": str(payout),
-            "number": 1234, "currency": "BTC", "security_token": TOKEN,
+            "number": 1234, "currency": {101: "BTC", 109: "SOL"}[body["currency"]], "security_token": TOKEN,
             "unreviewed_metadata": "must-not-reach-browser",
         }}})
     return httpx.Response(200, json={
-        "bet": {"hash": "slow-result" if body.get("symbol") == "SLOW" else "duck-result",
+        "bet": {"hash": "slow-result" if os.environ.get("E2E_MODE") == "slow" else "duck-result",
                 "number": 1234, "result": True, "betAmount": str(stake),
                 "winAmount": str(payout), "profit": str(payout - stake)},
         "user": {"balance": "1.25"},
@@ -109,6 +120,21 @@ async def configure(request: Request):
         os.environ[trade.PROFILE_ENV] = PROFILE if data["profile"] else PROFILE + ".missing"
     if "cap" in data:
         os.environ[trade.MAX_STAKE_ENV] = "1" if data["cap"] else ""
+    if "floor" in data:
+        os.environ[trade.MIN_STAKE_ENV] = str(data["floor"])
+    if "rates" in data:
+        os.environ["E2E_RATES"] = "down" if data["rates"] is False else "up"
+    if "mode" in data:
+        os.environ["E2E_MODE"] = data["mode"]
+    if "cap_value" in data:
+        os.environ[trade.MAX_STAKE_ENV] = str(data["cap_value"])
+    if "usd_cap" in data:
+        os.environ[trade.MAX_USD_ENV] = str(data["usd_cap"])
+    if "sol_rate" in data:
+        os.environ["E2E_SOL_RATE"] = str(data["sol_rate"])
+    if "listen_seconds" in data:
+        from sandbox import bet_token
+        bet_token.MAX_LISTEN_SECONDS = float(data["listen_seconds"])
     if data.get("reset") is True:
         trade.reset_bet_guard()
     return {"ok": True}

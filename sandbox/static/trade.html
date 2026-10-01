@@ -23,12 +23,21 @@
   pre { white-space:pre-wrap; background:#f7f7f7; border:1px solid #ddd; padding:.75rem; }
   .bad { color:#a00; }
   .ok { color:#060; }
+  .signals { display:grid; gap:.5rem; margin:1rem 0; }
+  .signal { border:2px solid; border-left-width:8px; padding:.65rem .8rem; font-weight:600; }
+  .signal.red { color:#8b1717; background:#fff1f1; border-color:#b42323; }
+  .signal.green { color:#14532d; background:#effbf2; border-color:#218044; }
+  #status { white-space:pre-line; }
 </style>
 </head>
 <body>
 <h1>local trade desk</h1>
 <p class="sub">One manual wager at a time, sent only if this server was started with
 live mode. This page does not roll locally and does not store a key.</p>
+<div class="signals" role="status" aria-live="polite" aria-atomic="true">
+  <div id="live_signal" class="signal red">LIVE MODE UNKNOWN — checking server</div>
+  <div id="gate_signal" class="signal red">NOT CHECKED — refresh status before betting</div>
+</div>
 
 <form id="desk">
   <fieldset>
@@ -41,10 +50,12 @@ live mode. This page does not roll locally and does not store a key.</p>
         </select>
       </label>
       <label>currency
-        <input id="currency" name="currency" type="text" value="BTC" autocomplete="off" required>
+        <input id="currency" name="currency" type="text" value="SOL" autocomplete="off" required>
       </label>
-      <label>stake
-        <input id="amount" name="amount" type="text" value="0.00000050" autocomplete="off" required>
+      <label>stake (USD)
+        <input id="amount" name="amount" type="number" step="0.01" min="0.01" value="0.01" autocomplete="off" required>
+        <span id="minimum" class="note">minimum: loading</span>
+        <button id="use_minimum" type="button" disabled>Use minimum</button>
       </label>
     </div>
     <div class="row">
@@ -58,11 +69,12 @@ live mode. This page does not roll locally and does not store a key.</p>
         </select>
       </label>
     </div>
-    <label>
-      <span><input id="confirm" name="confirm" type="checkbox"> I confirm this one real wager</span>
-    </label>
+    <p class="note">Clicking Bet confirms and submits one real-money wager. No repeat betting.</p>
     <p><button id="bet" type="submit">Bet</button>
-      <button id="refresh" type="button">Refresh status</button></p>
+      <button id="refresh" type="button">Refresh status</button>
+      <button id="capture" type="button">Capture token</button></p>
+    <div id="capture_signal" class="signal red" role="status" aria-live="polite">NOT LISTENING — select Capture token to start</div>
+    <p class="note">Capture listens for up to five minutes after attaching to your logged-in Chrome. Wait for the green Listening indicator. It cannot mint or recover a cached token, and sends no wager. Do not place wagers just to obtain a token.</p>
   </fieldset>
 </form>
 
@@ -85,8 +97,8 @@ const currency = document.getElementById("currency");
 const amount = document.getElementById("amount");
 const target = document.getElementById("target");
 const side = document.getElementById("side");
-const confirmBox = document.getElementById("confirm");
 const bet = document.getElementById("bet");
+const capture = document.getElementById("capture");
 const refresh = document.getElementById("refresh");
 const statusEl = document.getElementById("status");
 const resultEl = document.getElementById("result");
@@ -94,6 +106,72 @@ const form = document.getElementById("desk");
 
 let sending = false;
 let uncertain = false;
+let capturing = false;
+let statusVersion = 0;
+let minimumReady = false;
+const useMinimum = document.getElementById("use_minimum");
+const liveSignal = document.getElementById("live_signal");
+const gateSignal = document.getElementById("gate_signal");
+const captureSignal = document.getElementById("capture_signal");
+let capturePollTimer;
+
+function renderCaptureState(row) {
+  const listening = row.token_state === "listening" && row.listen_seconds_remaining > 0;
+  const held = row.token_state === "held";
+  captureSignal.className = "signal " + (listening || held ? "green" : "red");
+  captureSignal.textContent = listening
+    ? "LISTENING — waiting for a new token (" + row.listen_seconds_remaining + " seconds remaining); no wager is sent"
+    : held ? "TOKEN CAPTURED — held securely on the server; listening has stopped"
+    : row.token_state === "connecting" ? "CONNECTING — listener is not ready yet"
+    : "NOT LISTENING — " + (row.token_detail || "capture unavailable");
+}
+
+async function pollCaptureState() {
+  try {
+    const response = await fetch("/api/token/status", {
+      method: "POST", headers: {"Content-Type": "application/json"}, body: "{}",
+      signal: AbortSignal.timeout(3000)
+    });
+    const body = await readJson(response);
+    if (!body.ok) throw new Error("capture status unavailable");
+    if (capturing) renderCaptureState(body.token);
+  } catch {
+    if (capturing) renderCaptureState({token_detail: "status unavailable; listener readiness is unknown"});
+  } finally {
+    if (capturing) capturePollTimer = setTimeout(pollCaptureState, 500);
+  }
+}
+
+function invalidateSignals() {
+  liveSignal.className = "signal red";
+  liveSignal.textContent = "LIVE MODE UNKNOWN — refresh status to check server";
+  gateSignal.className = "signal red";
+  gateSignal.textContent = "NOT CHECKED — status unavailable or changing";
+}
+
+function renderSignals(row) {
+  const enabled = row.live_enabled === true;
+  liveSignal.className = "signal " + (enabled ? "green" : "red");
+  liveSignal.textContent = enabled
+    ? "LIVE MODE ON — real-money submissions enabled on server"
+    : "LIVE MODE OFF — server will refuse every wager";
+  const blockers = [];
+  if (!enabled) blockers.push("live mode off");
+  if (row.blocked || uncertain) blockers.push("previous outcome unresolved; reconcile at provider");
+  const ceiling = Number(row.max_stake);
+  if (!Number.isFinite(ceiling) || ceiling <= 0) blockers.push("maximum stake not configured or unpriced (DUEL_TRADE_MAX_USD / DUEL_TRADE_MAX_STAKE)");
+  if (row.min_stake_state !== "priced") blockers.push("pricing or stake configuration unavailable");
+  if (row.provider === "duel") {
+    if (row.profile_present !== true) blockers.push("session missing or unreadable");
+    if (row.stale) blockers.push("captured session stale");
+    if (!["held", "env-override"].includes(row.token_state)) blockers.push("betting token " + (row.token_state || "missing"));
+  } else if (row.key_state !== "configured") blockers.push("API key missing");
+  if (enabled && row.balance_state !== "ok") blockers.push("balance could not be verified");
+  gateSignal.className = "signal " + (blockers.length ? "red" : "green");
+  gateSignal.textContent = blockers.length
+    ? "NOT READY — " + blockers.join("; ")
+    : "STATUS CHECKS PASSED — confirm each wager; server rechecks amount and token on submission";
+}
 
 
 function nonce() {
@@ -111,25 +189,77 @@ async function readJson(response) {
   }
 }
 
+let pricedMinimum = null;
+
+function usd(value) { return "$" + Number(value).toFixed(2) + " USD"; }
+
+function renderResult(result) {
+  const native = result.data.round;
+  const display = result.usd_equivalent;
+  const lines = [];
+  if (display) {
+    for (const [label, field] of [["stake", "amount_currency"], ["payout", "amount_won"], ["profit", "profit"], ["balance", "balance"]]) {
+      if (display[label] != null) lines.push(label + ": ≈ " + usd(display[label]) + " (" + native[field] + " " + display.currency + ")");
+    }
+    lines.push("USD equivalents at dispatch reference rate; native settlement below.");
+  }
+  resultEl.textContent = lines.join("\n") + "\n" + JSON.stringify(result, null, 2);
+}
 function renderStatus(body) {
   const row = body.status || {};
+  renderSignals(row);
+  pricedMinimum = row.min_usd || null;
+  minimumReady = row.min_stake_state === "priced" && Number(pricedMinimum) > 0;
+  amount.min = pricedMinimum || "0.01";
+  const rate = Number(row.usd_per_coin);
+  const quoted = Number.isFinite(rate) && rate > 0;
+  const coin = row.currency || currency.value;
+  const minimum = document.getElementById("minimum");
+  minimum.textContent = pricedMinimum
+    ? "minimum: " + usd(pricedMinimum) + "; exact coin minimum: " + row.min_stake + " " + coin + " (" + (row.min_stake_source || "reference rate") + ")" + (minimumReady ? "" : " — " + row.min_stake_detail)
+    : "minimum unavailable: " + (row.min_stake_detail || row.min_stake_state || "loading");
   const lines = [
     "provider: " + (row.provider || provider.value),
     "live: " + (row.live_enabled ? "enabled on the server" : "disabled"),
-    "max stake: " + (row.max_stake || "unknown"),
+    "max stake: " + (Number(row.max_usd) > 0 ? usd(row.max_usd) + " hard reference-rate limit; " : (quoted && Number(row.max_stake) > 0 ? "≈ " + usd(Number(row.max_stake) * rate) + "; " : "")) + (row.max_stake || "unknown") + " " + coin + " (effective coin ceiling)",
+    "min stake: " + (pricedMinimum ? usd(pricedMinimum) + "; " : "") + (row.min_stake || "unset") + " " + coin,
     "credentials: " + (row.provider === "duel" ? row.profile_label : row.key_state),
     row.provider === "duel" ? "security token: " + (row.token_state || "missing") : "",
+    row.token_detail || "",
     row.blocked ? "Blocked: reconcile the previous wager at the provider before restarting." : "",
-    "balance: " + (row.balance == null ? row.balance_state : row.balance + " " + (row.currency || "")),
+    "balance: " + (row.balance == null ? row.balance_state : (quoted ? "≈ " + usd(Number(row.balance) * rate) + "\n" : "") + row.balance + " " + coin),
     row.advice || ""
   ];
   statusEl.textContent = lines.filter(Boolean).join("\n");
-  statusEl.className = row.live_enabled ? "note ok" : "note";
+  statusEl.className = "note";
   if (row.blocked) uncertain = true;
-  bet.disabled = sending || uncertain;
+  capture.hidden = provider.value !== "duel";
+  refreshBet();
+}
+
+function belowMinimum() {
+  if (!pricedMinimum) return false;
+  const stake = Number(amount.value);
+  const floor = Number(pricedMinimum);
+  return Number.isFinite(stake) && Number.isFinite(floor) && stake < floor;
+}
+
+function refreshBet() {
+  const low = belowMinimum();
+  document.getElementById("minimum").className = low ? "note bad" : "note";
+  const valid = Number.isFinite(Number(amount.value)) && Number(amount.value) > 0;
+  bet.disabled = sending || capturing || uncertain || !minimumReady || low || !valid;
+  useMinimum.disabled = sending || capturing || !minimumReady;
+  bet.textContent = low ? "Below minimum" : "Bet";
 }
 
 async function loadStatus() {
+  const version = ++statusVersion;
+  invalidateSignals();
+  minimumReady = false;
+  refreshBet();
+  const selectedProvider = provider.value;
+  const selectedCurrency = currency.value;
   statusEl.textContent = "loading status…";
   const response = await fetch("/api/status", {
     method: "POST",
@@ -137,9 +267,12 @@ async function loadStatus() {
     body: JSON.stringify({ provider: provider.value, currency: currency.value })
   });
   const body = await readJson(response);
+  if (version !== statusVersion || selectedProvider !== provider.value || selectedCurrency !== currency.value) return;
   if (!body.ok) {
     statusEl.textContent = body.error || "status failed";
     statusEl.className = "note bad";
+    minimumReady = false;
+    refreshBet();
     return;
   }
   renderStatus(body);
@@ -147,7 +280,7 @@ async function loadStatus() {
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (sending || uncertain) return;
+  if (sending || capturing || uncertain || !minimumReady || belowMinimum()) return;
   sending = true;
   bet.disabled = true;
   resultEl.textContent = "sending one wager…";
@@ -156,12 +289,12 @@ form.addEventListener("submit", async (event) => {
     provider: provider.value,
     currency: currency.value,
     amount: amount.value,
+    amount_unit: "usd",
     target: target.value,
     side: side.value,
-    confirm: confirmBox.checked,
+    confirm: true,
     client_nonce: nonce()
   };
-  confirmBox.checked = false;
   try {
     const response = await fetch("/api/bet", {
       method: "POST",
@@ -175,16 +308,15 @@ form.addEventListener("submit", async (event) => {
       resultEl.className = "bad";
       return;
     }
-    resultEl.textContent = JSON.stringify(body.result, null, 2);
+    renderResult(body.result);
     resultEl.className = "ok";
-    confirmBox.checked = false;
   } catch (err) {
     uncertain = true;
     resultEl.textContent = "ambiguous: " + err + ". Not retried.";
     resultEl.className = "bad";
   } finally {
     sending = false;
-    bet.disabled = uncertain;
+    refreshBet();
     loadStatus().catch((err) => {
       statusEl.textContent = "status refresh failed: " + err;
       statusEl.className = "note bad";
@@ -193,11 +325,42 @@ form.addEventListener("submit", async (event) => {
 });
 
 function refreshStatus() {
-  loadStatus().catch(() => { statusEl.textContent = "Status unavailable; no wager was sent by this refresh."; });
+  loadStatus().catch(() => { minimumReady = false; refreshBet(); statusEl.textContent = "Status unavailable; no wager was sent by this refresh."; });
 }
 provider.addEventListener("change", refreshStatus);
+currency.addEventListener("input", () => { ++statusVersion; minimumReady = false; invalidateSignals(); refreshBet(); });
 currency.addEventListener("change", refreshStatus);
+amount.addEventListener("input", refreshBet);
 refresh.addEventListener("click", refreshStatus);
+useMinimum.addEventListener("click", () => {
+  if (minimumReady) { amount.value = pricedMinimum; refreshBet(); }
+});
+capture.addEventListener("click", () => {
+  if (sending || capturing) return;
+  capturing = true;
+  capture.disabled = true;
+  refreshBet();
+  renderCaptureState({token_state: "connecting"});
+  resultEl.className = "";
+  resultEl.textContent = "Connecting to Chrome. Capture will listen for up to five minutes after attaching; no wager will be sent.";
+  fetch("/api/token/capture", {method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"})
+    .then(readJson)
+    .then((body) => {
+      resultEl.textContent = body.ok
+        ? (body.token.token_detail || body.token.token_state)
+        : ((body.code ? body.code + ": " : "") + (body.error || "capture failed"));
+      resultEl.className = body.ok ? "ok" : "bad";
+      renderCaptureState(body.ok ? body.token : {token_detail: body.error || "capture failed"});
+      refreshStatus();
+    })
+    .catch((err) => {
+      resultEl.textContent = "capture failed: " + err;
+      resultEl.className = "bad";
+      renderCaptureState({token_detail: "capture request failed; listener state unknown"});
+    })
+    .finally(() => { capturing = false; clearTimeout(capturePollTimer); capture.disabled = false; refreshBet(); });
+  capturePollTimer = setTimeout(pollCaptureState, 250);
+});
 loadStatus().catch((err) => {
   statusEl.textContent = "status failed: " + err;
   statusEl.className = "note bad";
