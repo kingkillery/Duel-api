@@ -52,6 +52,9 @@ def parse_args():
                    help="ledger path (default: session_ledger.json)")
     p.add_argument("--balance", default=None, metavar="UBTC",
                    help="balance in uBTC; skips the live fetch")
+    p.add_argument("--jev", action="store_true",
+                   help="let jev pick among the verdict's approved families "
+                        "(advisory; deterministic gates stay authoritative)")
     return p.parse_args()
 
 
@@ -500,6 +503,125 @@ def compute_verdict(last_n, last_net, family, streak, drawdown, balance_ubtc,
     return result
 
 
+def describe_families(configs):
+    """{family: one-line description} for jev criteria, from config files."""
+    desc = {"plan1": ("11-config sequential batch of flat/custom_steps "
+                      "schedules (s01-s11), ~0.5 uBTC base, per-slot caps")}
+    for fam, name in FAMILY_CONFIGS.items():
+        cfg = configs.get(name) or {}
+        desc[fam] = str(cfg.get("description") or name)
+    return desc
+
+
+def family_history(rows, limit=8):
+    """{family: recent net uBTC floats, oldest->newest} from settled notes."""
+    hist = {}
+    for row in rows:
+        if not is_settled(row):
+            continue
+        note = str(row.get("note") or "")
+        fam = next((f for f in LADDER if f in note), None)
+        net = row_net(row)
+        if fam is None or net is None:
+            continue
+        hist.setdefault(fam, []).append(float(net * UBTC))
+    return {f: nets[-limit:] for f, nets in hist.items()}
+
+
+def jev_context(result, last_n, last_net, family, streak, drawdown,
+                balance_ubtc, rows, candidates, desc):
+    """Compact state dict for the family-pick request."""
+    return {
+        "context": {
+            "verdict": result["verdict"],
+            "next_round": result["next_n"],
+            "last_round": last_n,
+            "last_net_ubtc": (None if last_net is None
+                              else float(last_net * UBTC)),
+            "last_family": family,
+            "loss_streak": streak,
+            "drawdown_ubtc": float(drawdown * UBTC),
+            "balance_ubtc": (None if balance_ubtc is None
+                             else float(balance_ubtc)),
+            "floor_ubtc": float(FLOOR_UBTC),
+        },
+        "family_history_ubtc": family_history(rows),
+        "families": {f: desc[f] for f in candidates},
+    }
+
+
+def apply_jev(result, rows, last_n, last_net, family, streak, drawdown,
+              balance_ubtc, configs):
+    """Let jev pick among the verdict's approved options; may tighten to HALT.
+
+    jev only ever narrows what the deterministic table already approved: it
+    picks one fundable family, or recommends sitting out (which becomes a
+    HALT). It can never widen the option set or override a HALT. On any
+    failure or low confidence the deterministic result stands unchanged.
+    """
+    if result["verdict"] == "HALT":
+        return result
+    import jev
+    import jev_questions as jq
+
+    spec_map = None
+    if result["verdict"] == "RECOVERY":
+        # compute_verdict stops at the first fundable family; jev chooses
+        # among all of them, so compute every family's spec here.
+        start = LADDER.index(family) + 1
+        order = LADDER[start:] + LADDER[:start]
+        spec_map = {}
+        for fam in order:
+            specs, _reason = recovery_updates(fam, streak, abs(last_net),
+                                              balance_ubtc, configs)
+            if specs is not None:
+                spec_map[fam] = specs
+        candidates = list(spec_map)
+    else:  # STANDARD
+        candidates = [o["family"] for o in result["options"] if o["ok"]]
+    if not candidates:
+        return result
+
+    desc = describe_families(configs)
+    questions = {"pick": jq.family_choice_question(
+        {f: desc[f] for f in candidates})}
+    state = jev_context(result, last_n, last_net, family, streak, drawdown,
+                        balance_ubtc, rows, candidates, desc)
+    try:
+        answers = jev.system_one(state, questions)
+        pick, conf, probs = jev.pick_family(
+            answers, "pick", candidates, jq.SIT_OUT,
+            jq.PICK_CONFIDENCE, jq.SIT_OUT_CONFIDENCE)
+    except jev.JevError as e:
+        result["jev"] = {"status": f"unavailable ({e}); deterministic default"}
+        return result
+
+    result["jev"] = {"confidence": conf, "probabilities": probs}
+    if pick == jq.SIT_OUT:
+        result.update(verdict="HALT",
+                      reason=f"jev sit-out (confidence {conf:.2f})",
+                      family=None, command=None, specs=None, options=[])
+        result["jev"]["status"] = "sit_out"
+    elif pick is None:
+        result["jev"]["status"] = (f"low confidence ({conf:.2f}); "
+                                   "deterministic default")
+    else:
+        result["jev"]["status"] = f"picked {pick} (confidence {conf:.2f})"
+        result["jev"]["pick"] = pick
+        if result["verdict"] == "RECOVERY":
+            result.update(family=pick, specs=spec_map[pick],
+                          command=command_for(pick, result["next_n"],
+                                              "recovery", streak))
+        else:
+            opts = result["options"]
+            picked = [o for o in opts if o["family"] == pick]
+            for o in picked:
+                o["jev_pick"] = True
+            # Chosen command prints first so auto_goal.py's first-command
+            # parser picks it up.
+            result["options"] = picked + [o for o in opts if o["family"] != pick]
+    return result
+
 def main():
     args = parse_args()
     rows = load_rows(Path(args.ledger))
@@ -521,19 +643,30 @@ def main():
 
     # The verdict table lives in compute_verdict(); main only renders it and
     # performs the RECOVERY config write the computation produced.
+    configs = load_configs()
     result = compute_verdict(last_n, last_net, family, streak, drawdown,
                              balance_ubtc, ignore_floor=args.ignore_floor,
-                             configs=load_configs())
+                             configs=configs)
+    if args.jev:
+        result = apply_jev(result, rows, last_n, last_net, family, streak,
+                           drawdown, balance_ubtc, configs)
+    jev_status = (result.get("jev") or {}).get("status")
     if result["verdict"] == "HALT":
         print(f"VERDICT: HALT ({result['reason']})")
+        if jev_status:
+            print(f"  jev: {jev_status}")
         for line in result["skipped"]:
             print(f"  skip {line}")
     elif result["verdict"] == "RECOVERY":
         print(f"VERDICT: RECOVERY {result['family']}")
+        if jev_status:
+            print(f"  jev: {jev_status}")
         write_specs(result["specs"], args.dry_run)
         print(f"  {result['command']}")
     else:
         print("VERDICT: STANDARD")
+        if jev_status:
+            print(f"  jev: {jev_status}")
         for i, opt in enumerate(result["options"], 1):
             if opt["ok"]:
                 print(f"  [{i}] {opt['command']}")
