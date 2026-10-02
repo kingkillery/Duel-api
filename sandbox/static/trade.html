@@ -113,7 +113,6 @@ const useMinimum = document.getElementById("use_minimum");
 const liveSignal = document.getElementById("live_signal");
 const gateSignal = document.getElementById("gate_signal");
 const captureSignal = document.getElementById("capture_signal");
-let capturePollTimer;
 
 function renderCaptureState(row) {
   const listening = row.token_state === "listening" && row.listen_seconds_remaining > 0;
@@ -134,11 +133,11 @@ async function pollCaptureState() {
     });
     const body = await readJson(response);
     if (!body.ok) throw new Error("capture status unavailable");
-    if (capturing) renderCaptureState(body.token);
+    renderCaptureState(body.token);
   } catch {
-    if (capturing) renderCaptureState({token_detail: "status unavailable; listener readiness is unknown"});
+    renderCaptureState({token_detail: "status unavailable; listener readiness is unknown"});
   } finally {
-    if (capturing) capturePollTimer = setTimeout(pollCaptureState, 500);
+    setTimeout(pollCaptureState, 1000);
   }
 }
 
@@ -358,9 +357,9 @@ capture.addEventListener("click", () => {
       resultEl.className = "bad";
       renderCaptureState({token_detail: "capture request failed; listener state unknown"});
     })
-    .finally(() => { capturing = false; clearTimeout(capturePollTimer); capture.disabled = false; refreshBet(); });
-  capturePollTimer = setTimeout(pollCaptureState, 250);
+    .finally(() => { capturing = false; capture.disabled = false; refreshBet(); });
 });
+pollCaptureState();
 loadStatus().catch((err) => {
   statusEl.textContent = "status failed: " + err;
   statusEl.className = "note bad";
