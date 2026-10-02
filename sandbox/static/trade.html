@@ -72,9 +72,9 @@ live mode. This page does not roll locally and does not store a key.</p>
     <p class="note">Clicking Bet confirms and submits one real-money wager. No repeat betting.</p>
     <p><button id="bet" type="submit">Bet</button>
       <button id="refresh" type="button">Refresh status</button>
-      <button id="capture" type="button">Capture token</button></p>
-    <div id="capture_signal" class="signal red" role="status" aria-live="polite">NOT LISTENING — select Capture token to start</div>
-    <p class="note">Capture listens for up to five minutes after attaching to your logged-in Chrome. Wait for the green Listening indicator. It cannot mint or recover a cached token, and sends no wager. Do not place wagers just to obtain a token.</p>
+      <button id="capture" type="button">Connect &amp; capture token</button></p>
+    <div id="capture_signal" class="signal red" role="status" aria-live="polite">NOT LISTENING — select Connect &amp; capture token to start</div>
+    <p class="note">Connect opens or reuses dedicated Chrome on port 51537, refreshes the saved session, then listens for up to five minutes. If prompted, sign in manually and click again. Wait for the green Listening indicator. It cannot mint or recover a cached token, and sends no wager. Do not place wagers just to obtain a token.</p>
   </fieldset>
 </form>
 
@@ -342,7 +342,7 @@ capture.addEventListener("click", () => {
   renderCaptureState({token_state: "connecting"});
   resultEl.className = "";
   resultEl.textContent = "Connecting to Chrome. Capture will listen for up to five minutes after attaching; no wager will be sent.";
-  fetch("/api/token/capture", {method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"})
+  fetch("/api/token/connect", {method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"})
     .then(readJson)
     .then((body) => {
       resultEl.textContent = body.ok

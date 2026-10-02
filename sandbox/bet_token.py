@@ -25,11 +25,12 @@ import math
 import os
 import threading
 import time
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 CDP_ENV = "DUEL_TRADE_CDP_URL"
-DEFAULT_CDP_URL = "http://127.0.0.1:9222"
+DEFAULT_CDP_URL = "http://127.0.0.1:51537"
 SITE = "duel.com"
 TOKEN_POST_MARK = "/api/v2/user/security/token"
 MIN_TOKEN_LEN = 20
@@ -247,7 +248,7 @@ def _parse_response(response: Any) -> dict[str, Any] | None:
     return {"token": token, "expires_at": time.time() + ttl, "token_type": token_type}
 
 
-def capture_from_cdp(fingerprint: str, *, timeout_s: float | None = None) -> dict[str, Any]:
+def capture_from_cdp(fingerprint: str = "", *, timeout_s: float | None = None, refresh_profile: Path | None = None) -> dict[str, Any]:
     """Attach to the operator's Chrome and hold a token only from a real mint response.
 
     This does not mint, does not click, and does not place a wager. It cannot
@@ -257,13 +258,22 @@ def capture_from_cdp(fingerprint: str, *, timeout_s: float | None = None) -> dic
     once its payload is proven.
     """
     url = assert_loopback_cdp(cdp_url())
-    if not fingerprint:
+    if not fingerprint and refresh_profile is None:
         raise TokenCaptureError("session", "no profile session is available to bind a token to")
     if not _capture_lock.acquire(blocking=False):
         raise TokenCaptureError("busy", "a token capture is already running")
     try:
         note_failure("connecting", "connecting to the configured Chrome window; no wager will be sent")
+        if refresh_profile is not None:
+            from sandbox.browser_connect import prepare_session
+            fingerprint = prepare_session(url, refresh_profile)
         return _capture_locked(url, fingerprint, MAX_LISTEN_SECONDS if timeout_s is None else min(timeout_s, MAX_LISTEN_SECONDS))
+    except TokenCaptureError as exc:
+        note_failure(exc.code, exc.message)
+        raise
+    except Exception as exc:
+        note_failure("cdp", "Chrome connection or session refresh failed; no wager was sent")
+        raise TokenCaptureError("cdp", "Chrome connection or session refresh failed; no wager was sent") from exc
     finally:
         _capture_lock.release()
 

@@ -63,9 +63,16 @@ py -3.13 -m sandbox.trade
 A Duel wager needs a bet token held in server memory. The page has no token
 field, does not accept one in the request, and the server never returns the
 value. `DUEL_TRADE_SECURITY_TOKEN` remains an explicit server-side override for
-a token the browser already minted. Prefer Capture on the page: it attaches to
-the operator's own Chrome at `DUEL_TRADE_CDP_URL` (loopback only, default
-`http://127.0.0.1:9222`) and listens. It does not mint. Login alone does not
+a token the browser already minted. **Connect & capture token** attaches to
+the operator's Chrome at `DUEL_TRADE_CDP_URL` (loopback only, default
+`http://127.0.0.1:51537`). If unavailable, it opens Windows Chrome using the
+dedicated `.private-api-automation/chrome-login-51537` profile. Auto-launch is
+restricted to that port; other configured endpoints must already be running.
+It refreshes the configured session file atomically, then starts passive listening.
+A missing login leaves the saved profile unchanged: sign in manually and click
+again. Preparation/listening blocks desk wagers and concurrent connect attempts;
+the legacy `/api/token/capture` endpoint remains listen-only. It does not mint.
+Login alone does not
 produce a bet token, and this desk does not call the token endpoint or reuse a
 hardcoded code. Capture must be listening **while** the page obtains a token;
 it cannot recover a response emitted before listening began. If no usable

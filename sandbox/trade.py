@@ -558,6 +558,7 @@ def place(req: BetRequest) -> dict[str, Any]:
 
 _lock = threading.Lock()
 _inflight = False
+_connecting_capture = False
 _blocked = False
 _seen_nonces: set[str] = set()
 _installed_mock: Callable[[str], Any] | None = None
@@ -646,10 +647,32 @@ def capture_token() -> JSONResponse:
     return JSONResponse({"ok": True, "token": state})
 
 
+@app.post("/api/token/connect")
+def connect_capture_token() -> JSONResponse:
+    """Prepare Chrome and refresh the selected profile before passive capture."""
+    global _connecting_capture
+    from sandbox.bet_token import TokenCaptureError, capture_from_cdp
+
+    with _lock:
+        if _blocked or _inflight or _connecting_capture:
+            return _error(TradeError(409, "busy", "cannot refresh the session during a wager, unresolved outcome, or another connection"))
+        _connecting_capture = True
+    try:
+        state = capture_from_cdp(refresh_profile=profile_path())
+        return JSONResponse({"ok": True, "token": state})
+    except TokenCaptureError as exc:
+        return _error(TradeError(409, exc.code, exc.message))
+    finally:
+        with _lock:
+            _connecting_capture = False
+
+
 @app.post("/api/bet")
 def bet(req: BetRequest) -> JSONResponse:
     global _inflight, _blocked
     with _lock:
+        if _connecting_capture:
+            return _error(TradeError(409, "busy", "browser session preparation or token capture is active; no wager sent"))
         if _blocked:
             return _error(TradeError(409, "blocked", "desk is blocked; reconcile the wager at the provider before restarting"))
         if _inflight:

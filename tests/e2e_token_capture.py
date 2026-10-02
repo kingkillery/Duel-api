@@ -91,6 +91,7 @@ def drive(context, url, log):
     site = context.new_page()
     site.on("pageerror", lambda error: errors.append(str(error)))
     site.goto(SITE, wait_until="load")
+    site.evaluate("localStorage.setItem('security:uuid', 'synthetic-device')")
     desk = context.new_page()
     desk.on("pageerror", lambda error: errors.append(str(error)))
     desk.on("console", lambda message: console.append(message.text))
@@ -114,9 +115,9 @@ def drive(context, url, log):
     def listen_then_emit(token_type="standard", ttl=120, delay_ms=0):
         response_body.update(expires_in=ttl, token_type=token_type)
         site.evaluate("type => { window.fixtureType = type; document.querySelector('#done').textContent = ''; }", token_type)
-        with desk.expect_response(url + "api/token/capture", timeout=40000) as pending:
+        with desk.expect_response(url + "api/token/connect", timeout=60000) as pending:
             desk.locator("#capture").click()
-            deadline = time.monotonic() + 10
+            deadline = time.monotonic() + 30  # Includes session refresh and the second CDP attachment.
             while True:
                 current = api("/api/token/status", {})["body"]["token"]
                 state = current["token_state"]
@@ -136,6 +137,12 @@ def drive(context, url, log):
                 desk.wait_for_timeout(delay_ms)
                 assert api("/api/token/status", {})["body"]["token"]["token_state"] == "listening"
                 assert not minted and not wagers(log)
+                second = context.new_page()
+                second.goto(url)
+                expect(second.locator("#capture_signal")).to_contain_text("LISTENING —")
+                second.close()
+                blocked_bet = api("/api/bet", {"provider": "duel", "currency": "BTC", "amount": "0.0000005", "target": "50", "side": "UNDER", "confirm": True, "client_nonce": "capture-active-test"})
+                assert blocked_bet["status"] == 409 and blocked_bet["body"]["code"] == "busy"
             # This click is never issued until the production listener reports ready.
             site.get_by_role("button", name="MOCK-TOKEN-RESPONSE").click()
             expect(site.locator("#done")).to_have_text("fulfilled")
@@ -156,7 +163,7 @@ def drive(context, url, log):
     assert code == 200 and captured["ok"] is True
     assert captured["token"]["token_state"] == "held"
     expect(desk.locator("#capture_signal")).to_contain_text("TOKEN CAPTURED")
-    expect(desk.locator("#status")).to_contain_text("security token: held")
+    expect(desk.locator("#status")).to_contain_text("security token: held", timeout=15000)
     assert status()["token_state"] == "held"
     assert minted == [{"type": "standard"}]
     assert not wagers(log), "Capture placed a wager"
@@ -179,16 +186,21 @@ def drive(context, url, log):
 
     # Real cookie mismatch is refused before observing any mint, dropping old token.
     context.add_cookies([{"name": AUTH_COOKIE, "value": "synthetic-other-session", "url": "https://duel.com"}])
-    with desk.expect_response(url + "api/token/capture", timeout=10000) as pending:
-        desk.locator("#capture").click()
-    assert pending.value.status == 409 and pending.value.json()["code"] == "session"
+    mismatch = api("/api/token/capture", {})  # Legacy listen-only endpoint must not silently refresh identity.
+    assert mismatch["status"] == 409 and mismatch["body"]["code"] == "session"
     assert status()["token_state"] == "session"
     assert len(minted) == 1 and len(wagers(log)) == 1
     context.add_cookies([{"name": AUTH_COOKIE, "value": "synthetic-auth", "url": "https://duel.com"}])
     print("PASS profile/browser mismatch refuses capture and invalidates previous token")
+    context.clear_cookies()
+    missing_login = api("/api/token/connect", {})
+    assert missing_login["status"] == 409 and missing_login["body"]["code"] == "login-required"
+    assert len(minted) == 1 and len(wagers(log)) == 1
+    context.add_cookies([{"name": AUTH_COOKIE, "value": "synthetic-auth", "url": "https://duel.com"}])
+    print("PASS connect refreshes session, missing login refuses without minting or wagering, cross-tab readiness")
 
     # Production rejects these mint responses and finishes its real bounded listen.
-    api("/__fixture/config", {"listen_seconds": 2})  # Shorten only the offline fixture's negative timeout checks.
+    api("/__fixture/config", {"listen_seconds": 8})  # Shorten only the offline fixture's negative timeout checks.
     for token_type, ttl in [("onetime", 120), ("standard", 0)]:
         code, refused = listen_then_emit(token_type, ttl)
         assert code == 409 and refused["code"] == "operator-action-required"
@@ -212,6 +224,25 @@ def drive(context, url, log):
 
 
 def main():
+    if os.name == "nt":
+        from unittest.mock import patch
+        sys.path.insert(0, str(ROOT))
+        from sandbox.browser_connect import _launch_chrome
+        from sandbox.bet_token import TokenCaptureError
+        with patch("sandbox.browser_connect.Path.is_file", return_value=True), patch("sandbox.browser_connect.subprocess.Popen") as launch:
+            _launch_chrome("http://127.0.0.1:51537")
+            args = launch.call_args.args[0]
+            assert "--remote-debugging-address=127.0.0.1" in args and "--remote-debugging-port=51537" in args
+            assert any(arg.startswith("--user-data-dir=") and "chrome-login-51537" in arg for arg in args)
+            assert args[-1] == "https://duel.com/dice"
+            for invalid in ("http://127.0.0.1:9222", "http://example.com:51537"):
+                try:
+                    _launch_chrome(invalid)
+                    raise AssertionError("unsafe automatic browser launch accepted")
+                except TokenCaptureError:
+                    pass
+            assert launch.call_count == 1
+        print("PASS dedicated Chrome launch arguments and restricted endpoint (process mocked)")
     with tempfile.TemporaryDirectory(prefix="duel-token-e2e-") as temporary:
         root = Path(temporary)
         profile = root / "session.json"
