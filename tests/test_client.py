@@ -6,6 +6,7 @@ import json
 import re
 import tempfile
 import time
+from decimal import Decimal as D
 from pathlib import Path
 
 import httpx
@@ -1128,3 +1129,144 @@ def test_spec_drift_reports_a_missing_bundle_instead_of_raising() -> None:
 
     assert result["drifted"] is True
     assert "404" in result["reason"]
+
+
+# ------------------------------------------------------- dice_edge (the quote)
+#
+# dice_edge is the pre-bet payout quote: `automation_cli.py --edge-guard` reads
+# it from the live config BEFORE sizing against a bankroll, and its product
+# (win_chance * multiplier) is what the bankroll rules actually consume. Every
+# branch below fails CLOSED - a config that cannot pin an edge must refuse
+# rather than let sizing proceed on an assumed number.
+
+
+def _config_client(scaling) -> DuelClient:
+    """A client whose dice_config() returns the given scaling_edge table."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": {"scaling_edge": scaling}})
+
+    return make_client(handler)
+
+
+def _under_tier(house_edge, range_to="9800") -> dict:
+    return {"range_to": range_to, "tiers": [{"house_edge": house_edge}]}
+
+
+def test_dice_edge_derives_chance_and_multiplier_from_the_live_config() -> None:
+    """UNDER T wins with probability T/10000; multiplier is (1 - edge) / chance.
+
+    At target 5005 (50.05%) under an edge of 0.01 the win chance is 0.5005 and
+    the multiplier is 0.99 / 0.5005, so p * multiplier == 0.99 exactly.
+    """
+    with _config_client({"200": _under_tier("0.01")}) as client:
+        chance, multiplier = client.dice_edge(target="5005", side="UNDER")
+
+    assert chance == D("5005") / 10000
+    assert multiplier == D("0.99") / chance
+    assert chance * multiplier == D("0.99")
+
+
+def test_dice_edge_over_flips_the_chance_against_the_target() -> None:
+    """OVER T wins with probability (10000 - T)/10000, not T/10000."""
+    with _config_client({"200": _under_tier("0.02")}) as client:
+        chance, multiplier = client.dice_edge(target="5005", side="OVER")
+
+    assert chance == D("4995") / 10000
+    assert chance * multiplier == D("0.98")
+
+
+def test_dice_edge_lowercases_side_without_losing_the_branch() -> None:
+    """`side='over'` must upper() to the OVER branch, not fall through to UNDER."""
+    with _config_client({"200": _under_tier("0.01")}) as client:
+        chance, _ = client.dice_edge(target="5005", side="over")
+
+    assert chance == D("4995") / 10000
+
+
+@pytest.mark.parametrize("target", ["199", "9801", "0", "abc", "", "-5", "50.05", None])
+def test_dice_edge_refuses_a_target_outside_the_wire_range(target) -> None:
+    """200-9800 is the target's valid x100 range; anything else refuses up front.
+
+    A non-digit target would otherwise reach int() and raise a raw ValueError
+    from the wrong place - the guard must name the target.
+    """
+    with _config_client({"200": _under_tier("0.01")}) as client:
+        with pytest.raises(ValueError, match="target must be the roll target x100"):
+            client.dice_edge(target=target)
+
+
+def test_dice_edge_refuses_an_unknown_side() -> None:
+    with _config_client({"200": _under_tier("0.01")}) as client:
+        with pytest.raises(ValueError, match="side must be one of"):
+            client.dice_edge(target="5005", side="SIDEWAYS")
+
+
+def test_dice_edge_refuses_a_config_with_no_scaling_table() -> None:
+    """A config that omits scaling_edge cannot pin an edge -> fail closed."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": {}})
+
+    with make_client(handler) as client:
+        with pytest.raises(ValueError, match="no scaling_edge table"):
+            client.dice_edge(target="5005")
+
+
+def test_dice_edge_refuses_a_config_that_is_not_a_mapping() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=["not", "a", "dict"])
+
+    with make_client(handler) as client:
+        with pytest.raises(ValueError, match="no scaling_edge table"):
+            client.dice_edge(target="5005")
+
+
+def test_dice_edge_refuses_when_no_tier_covers_the_target() -> None:
+    """A table with a gap under the target must refuse, never assume."""
+    with _config_client({"200": _under_tier("0.01", range_to="500")}) as client:
+        with pytest.raises(ValueError, match="no dice config tier covers target 5005"):
+            client.dice_edge(target="5005")
+
+
+def test_dice_edge_skips_a_non_dict_block_and_a_non_int_key() -> None:
+    """Malformed neighbours must not crash the scan or shadow the real tier."""
+    scaling = {
+        "junk": 42,
+        "also-junk": "nope",
+        "200": _under_tier("0.01"),
+    }
+    with _config_client(scaling) as client:
+        chance, _ = client.dice_edge(target="5005")
+
+    assert chance == D("5005") / 10000
+
+
+def test_dice_edge_refuses_a_block_whose_range_to_is_not_an_int() -> None:
+    """range_to='later' cannot bound the tier, so the scan must skip it."""
+    with _config_client({"200": {"range_to": "later", "tiers": [{"house_edge": "0.01"}]}}) as client:
+        with pytest.raises(ValueError, match="no dice config tier covers target 5005"):
+            client.dice_edge(target="5005")
+
+
+def test_dice_edge_refuses_a_tier_without_a_house_edge() -> None:
+    """A tier block present but lacking house_edge must not yield an assumed edge."""
+    with _config_client({"200": {"range_to": "9800", "tiers": [{"other": 1}]}}) as client:
+        with pytest.raises(ValueError, match="no dice config tier covers target 5005"):
+            client.dice_edge(target="5005")
+
+
+def test_dice_edge_refuses_a_tier_with_an_empty_tiers_list() -> None:
+    with _config_client({"200": {"range_to": "9800", "tiers": []}}) as client:
+        with pytest.raises(ValueError, match="no dice config tier covers target 5005"):
+            client.dice_edge(target="5005")
+
+
+def test_dice_edge_refuses_a_zero_win_chance() -> None:
+    """target 9800 on OVER wins with probability 200/10000, never zero; but a
+    target that arithmetic could drive to zero must still refuse rather than
+    divide by it."""
+    with _config_client({"200": _under_tier("0.01")}) as client:
+        chance, _ = client.dice_edge(target="9800", side="OVER")
+
+    assert chance == D("200") / 10000

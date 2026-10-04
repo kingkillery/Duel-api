@@ -97,8 +97,22 @@ STANDARD). Accordingly:
 A 0-round row with a **non-zero** net (e.g. a partial killed mid-round) still
 counts, because the balance moved.
 
-Evidence: `tests/test_protocol_funding.py` (20 cases) pins these rules against real
-ledger row shapes.
+Evidence: `tests/test_protocol_funding.py` (46 cases) pins these rules against real
+ledger row shapes, including the pending-settlement boundary and its propagation
+into the verdict gates. `tests/test_next_bet.py` (15 cases) pins the pre-bet
+checker's local labels — see below.
+
+### Local output is not live clearance
+
+`next_bet.py` is arithmetic over the policy plus two caller-supplied numbers. Its
+`--pending` defaults to `0`, so check 5 ("no unsettled bet") passes without any
+site query. Its `ADVANCE` ledger entry is written *before* the exit code is
+decided, so a run that failed still logs `ADVANCE`. **The exit code is the only
+pass/fail signal**; the label alone is not. `tests/test_next_bet.py` pins each of
+these.
+
+Turning any of it into live clearance requires the human-run
+[live-acceptance-protocol.md](live-acceptance-protocol.md) — currently unsigned.
 
 ---
 

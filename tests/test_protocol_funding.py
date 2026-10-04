@@ -83,6 +83,100 @@ class TestLedgerSettlement:
         assert nr.session_drawdown(settled + [noop]) == nr.session_drawdown(settled)
 
 
+    # ---- pending-settlement boundary --------------------------------------
+    # A row is "pending" when it cannot be proven to have placed bets. These
+    # pin which side each malformed shape falls on, because the answer decides
+    # whether the row may reset the streak or advance the round counter.
+
+    def test_a_non_dict_row_is_settled(self):
+        # The ledger is a list of dicts; a bare scalar can only come from a
+        # corrupted or hand-edited file. It cannot be proven to be a noop, so
+        # it counts rather than silently vanishing from the streak.
+        for row in ("x", [], None, 7, 0):
+            assert nr.is_settled(row) is True
+
+    @pytest.mark.parametrize("rounds", ["0", None, "", [], {}])
+    def test_a_falsy_rounds_value_falls_to_the_net_test(self, rounds):
+        # `rounds or 0` collapses every falsy shape to 0, so the decision is
+        # made by net alone - exactly like an explicit rounds=0.
+        assert nr.is_settled({"rounds": rounds, "net": "0"}) is False
+        assert nr.is_settled({"rounds": rounds, "net": "-5E-7"}) is True
+
+    def test_rounds_null_with_a_real_net_still_counts(self):
+        # json null is the shape a hand-edit produces; a non-zero net means
+        # the balance moved, so it is a real round.
+        assert nr.is_settled({"n": 5, "rounds": None, "net": "1E-7"}) is True
+
+    @pytest.mark.parametrize("rounds", ["abc", "1.5", object()])
+    def test_an_unparseable_rounds_value_fails_open(self, rounds):
+        # Deliberate: a row whose rounds cannot be read is assumed to be a
+        # real round, so a corrupt field can never erase a played round from
+        # the streak. This is the opposite of the noop direction above.
+        assert nr.is_settled({"rounds": rounds, "net": "0"}) is True
+
+    @pytest.mark.parametrize("net", [None, "", "oops", [], {}])
+    def test_a_0_round_row_with_no_readable_net_is_settled(self, net):
+        # net is None / unparseable: the row cannot be proven a noop, so it
+        # counts. row_net is the single parser both paths share.
+        assert nr.row_net({"net": net}) is None
+        assert nr.is_settled({"rounds": 0, "net": net}) is True
+
+    @pytest.mark.parametrize("zero", ["0", "0.0", "0E-9", "-0", "0.000000000"])
+    def test_every_decimal_spelling_of_zero_is_a_noop(self, zero):
+        # The noop test is numeric (net != 0), not textual, so alternate
+        # spellings of zero must not slip through as settled rows.
+        assert nr.is_settled({"n": 9, "rounds": 0, "net": zero}) is False
+
+    def test_a_1_round_row_with_zero_net_is_still_settled(self):
+        # A played round that broke exactly even. rounds != 0 short-circuits
+        # before net is consulted, so it counts.
+        assert nr.is_settled({"n": 9, "rounds": 1, "net": "0"}) is True
+        assert nr.is_settled({"n": 9, "rounds": 15, "net": "0"}) is True
+
+
+class TestPendingSettlementPropagation:
+    """The pending decision must reach the gates, not just the predicate."""
+
+    def test_noop_row_cannot_reset_the_streak(self):
+        # Three losses then a noop: the streak must stay 3, never 0.
+        rows = [{"n": i, "net": "-1E-7", "rounds": 1} for i in (70, 71, 72)]
+        noop = {"n": 73, "net": "0", "rounds": 0}
+        assert nr.loss_streak(rows) == 3
+        assert nr.loss_streak(rows + [noop]) == 3
+
+    def test_noop_row_cannot_advance_the_round_counter(self):
+        rows = [{"n": 72, "net": "-1E-7", "rounds": 1},
+                {"n": 73, "net": "0", "rounds": 0}]
+        last_n, _ = nr.last_round(rows)
+        assert last_n == 72
+        assert (last_n or 0) + 1 == 73
+
+    def test_noop_row_cannot_mask_a_drawdown(self):
+        # A noop must not enter the cumulative net, so the drawdown measured
+        # with it equals the drawdown without it.
+        rows = [{"n": 1, "net": "5E-7", "rounds": 1},
+                {"n": 2, "net": "-9E-7", "rounds": 1}]
+        noop = {"n": 3, "net": "0", "rounds": 0}
+        assert nr.session_drawdown(rows) == nr.session_drawdown(rows + [noop])
+
+    def test_partial_round_still_moves_the_drawdown(self):
+        # The n=13 shape: 0 rounds but a non-zero net. The balance moved, so
+        # it must count toward drawdown - it is NOT a pending row.
+        rows = [{"n": 12, "net": "1E-7", "rounds": 1},
+                {"n": 13, "net": "-5E-7", "rounds": 0}]
+        assert nr.is_settled(rows[1]) is True
+        assert nr.session_drawdown(rows) > 0
+
+    def test_a_pending_row_is_reported_not_folded_in(self):
+        # main() lists unsettled rows by their n so an operator sees the
+        # pending attempt rather than a silently-advanced counter.
+        rows = [{"n": 72, "net": "-1E-7", "rounds": 1},
+                {"n": "RESET", "net": "0", "rounds": 0},
+                {"n": 73, "net": "0", "rounds": 0}]
+        unsettled = [r.get("n") for r in rows if not nr.is_settled(r)]
+        assert unsettled == ["RESET", 73]
+
+
 class TestFundingGates:
     def test_plan1_exposure_is_the_sum_over_slots(self, tmp_path, monkeypatch):
         monkeypatch.setattr(nr, "PLAN1_CONFIGS",
